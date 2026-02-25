@@ -28,8 +28,8 @@ matFile = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions.mat'; % Pre-S
 p_app=[-2.0;0.0];
 
 % Last physical time at which prestress is calculated/frozen
-%prestress_time = 1.0;
-prestress_time = 0.0;
+prestress_time = 1.0;
+%prestress_time = 0.0;
 
 % Last Time of simulation
 %last_time = 1.5;
@@ -131,8 +131,8 @@ start_points = start_points(randomized_order, :);
 %start_points(1,:) = [1,1]; 
 
 % Prepend custom start point
-totalRunCount = 2; % Starts at 2 to skip calculation of the virtual field
-ForwardCount = 2;
+totalRunCount = 1; % Starts at 2 to skip calculation of the virtual field
+ForwardCount = 1;
 
 %% --- Prepare arrays to hold results ---
 n_start = size(start_points, 1);       % number of start points

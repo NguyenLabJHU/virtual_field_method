@@ -1,4 +1,6 @@
-function [datau,dataF]=simulate_febio_uniform(mydir,mymodel,matparam_sweep,ground_truth_mat,nnd,nel,param_ind,changing_matrix)
+function [datau,dataF]=simulate_febio_uniform(mydir,mymodel,matparam_sweep,...
+    ground_truth_mat,nnd,nel,param_ind,changing_matrix,ops_matrix_struct,model)
+
 global last_time
  
 %dimension storage for simulation results
@@ -22,7 +24,41 @@ Nline = numel(data);
 
 matparam_line = matparam_sweep(param_ind,:);
 matparam = ground_truth_mat;
-matparam(param_ind,:) = matparam_line;
+param2change = changing_matrix{1,param_ind};
+matparam(param2change,:) = matparam_line;
+
+%OBS%
+%THIS PART IS HARDCODED TO ADDRESS THE SCLERA BEING SPLIT IN THREE%
+
+% Performing operations between parameters
+totalNparam =length(matparam(1,:));
+%Changing the K column from the matparam_complete
+totalNmat = length(matparam(:,1));
+
+for idx_Mat = 1:totalNmat
+    tgt_row = ops_matrix_struct(idx_Mat).tgt_row;
+    src_row = ops_matrix_struct(idx_Mat).src_row;
+    A_matrix = ops_matrix_struct(idx_Mat).A;
+    B_matrix = ops_matrix_struct(idx_Mat).B;
+
+    src_mult = zeros(1,totalNparam);
+
+    if isempty(A_matrix)
+        continue
+    end
+
+    for n_src = 1:length(src_row)
+    
+       src_mult = src_mult + matparam(src_row(n_src),:)* A_matrix{n_src}; 
+    
+    end
+
+    matparam(tgt_row,:) = (src_mult + matparam(tgt_row,:) * B_matrix)';
+end
+
+
+
+
 
 data = update_material_block_lines(data, matparam, model);
 
