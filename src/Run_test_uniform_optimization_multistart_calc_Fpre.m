@@ -118,7 +118,7 @@ else
 end
 
 
-N = 7; % number of random additional points
+N = 8; % number of random additional points
 lhs_points = lhsdesign(N, length(Normalizer));  % generates points in [0,1]
 
 % Scale lhs_points to actual bounds
@@ -128,10 +128,10 @@ start_points = bsxfun(@plus, lb, bsxfun(@times, lhs_points, (ub - lb)));
 randomized_order = randperm(size(start_points, 1));
 start_points = start_points(randomized_order, :);
 
-%start_points(1,:) = [1,1]; 
+%start_points(1,:) = [1,1,1,1,1,1,1,1]; 
 
 % Prepend custom start point
-totalRunCount = 1; % Starts at 2 to skip calculation of the virtual field
+totalRunCount = 2; % Starts at 2 to skip calculation of the virtual field
 ForwardCount = 1;
 
 %% --- Prepare arrays to hold results ---
@@ -194,7 +194,12 @@ for i = 1:n_start
     ForwardCount = 1;
 
     x_run = x_opt .* Normalizer    
-    start_points(i+1,:) = x_opt;
+
+    if i<n_start
+        start_points(i+1,:) = x_opt;
+    end
+
+
 end
 
 t_elapsed = toc(t); % End timing
