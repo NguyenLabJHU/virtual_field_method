@@ -236,7 +236,7 @@ for param_ind = 1:nParam
     [gauss_points_elem, weights_elem] = get_gauss_points(dimension_hex, gauss_order_hex);
 
     % ---- Loop over all volumetric elements ----
-    for k = 1:nel
+    parfor k = 1:nel
         ielem = model.elements(k,1);
         imatprop = zeros(size(model.matprop,2),1); 
         element_vf_norm_sq = 0;        % Virtual strain norm squared per element
