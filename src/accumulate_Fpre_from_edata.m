@@ -27,6 +27,7 @@ fclose(fid);
 
 lines = data{1};
 
+% Updating the material block line
 lines = update_material_block_lines(lines, matparam_complete, model);
 
 % --- Save modified lines back to a unique .feb file for this run (parallel-safe change) ---

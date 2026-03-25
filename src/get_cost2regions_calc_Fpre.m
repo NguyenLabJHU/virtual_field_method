@@ -6,7 +6,8 @@ function cost = get_cost2regions_calc_Fpre(path, mymodel, model,edata, x, ...
 
 
     %Creating material parameters vector to sweep on the PVW calculation
-    [ground_truth_mat,matparam_sweep,matparam_complete] = SweepMatrix(model,changing_matrix,x,Normalizer,ops_matrix_struct);
+    [ground_truth_mat,matparam_sweep,matparam_complete] = SweepMatrix(model,...
+        changing_matrix,x,Normalizer,ops_matrix_struct);
 
     
     % Try-catch block: handle potential failures in FEBio or cost calculation routines.
@@ -16,7 +17,8 @@ function cost = get_cost2regions_calc_Fpre(path, mymodel, model,edata, x, ...
         if ForwardCount==1
             % Always run on the first call, and then every 10th call
             mydir_data = path.data;
-            edata = accumulate_Fpre_from_edata(mydir_data, mymodel, gauss_order, prestress_time, matparam_complete, edata,model);
+            edata = accumulate_Fpre_from_edata(mydir_data, mymodel, ...
+                gauss_order, prestress_time, matparam_complete, edata,model);
             edata_with_Fpre_step = edata; % Save the new edata
             
             

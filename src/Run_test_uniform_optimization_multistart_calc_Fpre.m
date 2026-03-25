@@ -10,8 +10,16 @@ end
 %% --- Set up file paths and constants ---
 
 path = struct();
+
+% Getting the localion of this file
+fullFilePath = mfilename('fullpath');
+
+% The project is one folder above this one
+projectPath = fileparts(fileparts(fullFilePath));
+proj = matlab.project.loadProject(projectPath);
+
 % Get the current working directory 
-path.parent = pwd; 
+path.parent = proj.RootFolder; 
 
 % Define the path to the data/src/results/VF folders
 path.data = fullfile(path.parent, 'data');
@@ -121,7 +129,8 @@ else
     rng(task_id);
 end
 
-N = 5; % number of random additional points
+N = 8; % number of random additional points
+
 lhs_points = lhsdesign(N, length(Normalizer));  % generates points in [0,1]
 
 % Scale lhs_points to actual bounds

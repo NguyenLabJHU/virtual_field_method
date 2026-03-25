@@ -34,7 +34,7 @@ for matn = 1:nummat
                 % Use your previous lookup function to find matrix column
                 prop = mat_change2prop(mat_type, lower(param_name)); % returns column
                 if isempty(prop)
-                    warning('Parameter %s in material %s not recognized!', param_name, mat_type);
+                    %warning('Parameter %s in material %s not recognized!', param_name, mat_type);
                     continue;
                 end
 
