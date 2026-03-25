@@ -34,8 +34,8 @@ function save_optimization_results(dataPath, t_elapsed, start_points, fvals, x_o
 
     for i = 1:n_start
         % Format arrays as strings for a cleaner table look
-        x0_str = sprintf('[%.4f, %.4f, %.4f, %.4f, %.4f]', start_points(i,:));
-        xopt_str = sprintf('[%.4f, %.4f, %.4f, %.4f, %.4f]', x_opts(i,:));
+        x0_str = sprintf('[%.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f]', start_points(i,:));
+        xopt_str = sprintf('[%.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f, %.4f]', x_opts(i,:));
         
         fprintf(fileID, '%-8d | %-45s | %-12.4e | %-45s\n', ...
             i, x0_str, fvals(i), xopt_str);

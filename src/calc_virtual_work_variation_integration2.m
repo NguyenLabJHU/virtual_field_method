@@ -36,7 +36,7 @@ if isempty(gcp('nocreate'))
         N = feature('numcores'); % fallback se rodar local
     end
     
-    parpool('local', 4);
+    parpool('local', 8);
 end
 
 
@@ -249,11 +249,7 @@ for param_ind = 1:nParam
 
         % Material assignment for element
         matnum = model.elemmat(k);
-        imatprop(:) = model.matprop(matnum,:);
-        if ismember(matnum,changing_matrix(1,:))
-            imatprop(1) = matparam(matnum, 1);
-            imatprop(3) = matparam(matnum, 2);
-        end
+        imatprop(:) = matparam(matnum,:);
 
         element_IVW = 0;
         element_Vol = 0;

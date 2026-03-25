@@ -39,7 +39,11 @@ last_time = 2;
 eps = 1000;
 
 % Number of  different material models
-nMaterial = 11;      
+nMaterial = 11;   
+
+% Percentage of dirty data
+noise_percent = 0;
+sigma_additive = 0;
 
 %--------------------------------------------------------------------------
 % Gauss Order for Numerical Integration
@@ -117,8 +121,7 @@ else
     rng(task_id);
 end
 
-
-N = 7; % number of random additional points
+N = 5; % number of random additional points
 lhs_points = lhsdesign(N, length(Normalizer));  % generates points in [0,1]
 
 % Scale lhs_points to actual bounds
@@ -128,10 +131,10 @@ start_points = bsxfun(@plus, lb, bsxfun(@times, lhs_points, (ub - lb)));
 randomized_order = randperm(size(start_points, 1));
 start_points = start_points(randomized_order, :);
 
-%start_points(1,:) = [1,1]; 
+%start_points(1,:) = [1,1,1,1,1,1,1,1]; 
 
 % Prepend custom start point
-totalRunCount = 1; % Starts at 2 to skip calculation of the virtual field
+totalRunCount = 2; % Starts at 2 to skip calculation of the virtual field
 ForwardCount = 1;
 
 %% --- Prepare arrays to hold results ---
@@ -144,9 +147,9 @@ outputs = cell(n_start, 1);            % fmincon output structs
 model = struct();                      % model data (nodes, elements, surfaces, etc.)
 edata = struct();                      % simulation data (experimental data or results)
 
-%% --- Load mesh and experimental data --------------------------------------
+%% --- Load mesh and experimental data ------------------------------------
 %           Read Model and Node/Element Data, Compute Cumulative Fpre
-%  --------------------------------------------------------------------------
+%  ------------------------------------------------------------------------
 
 % Loads mesh and log file, including node coordinates, element connectivity, results at timesteps
 fullMatPath = fullfile(path.data, matFile);
@@ -162,7 +165,10 @@ else
     disp('Read experiment dataparsed and saved results.');
 end;
 
-%% --- Define the cost function (anonymous wrapper) ---
+%% --- Dirty the data for robustness --------------------------------------
+edata = dirty_steps_edata(edata, noise_percent, sigma_additive);
+
+%% --- Define the cost function (anonymous wrapper)  ----------------------
 cost_function = @(x) get_cost2regions_calc_Fpre(...
     path, mymodel, model, edata, x, p_app, gauss_order, prestress_time,eps,...
     changing_matrix,Normalizer,ops_matrix_struct);
@@ -194,7 +200,12 @@ for i = 1:n_start
     ForwardCount = 1;
 
     x_run = x_opt .* Normalizer    
-    start_points(i+1,:) = x_opt;
+
+    if i<n_start
+        start_points(i+1,:) = x_opt;
+    end
+
+
 end
 
 t_elapsed = toc(t); % End timing
