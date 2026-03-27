@@ -175,7 +175,7 @@ else
 end;
 
 %% --- Dirty the data for robustness --------------------------------------
-edata = dirty_steps_edata(edata, noise_percent, sigma_additive);
+edata = dirty_steps_edata(edata, model, noise_percent, sigma_additive);
 
 %% --- Define the cost function (anonymous wrapper)  ----------------------
 cost_function = @(x) get_cost2regions_calc_Fpre(...
