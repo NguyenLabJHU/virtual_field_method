@@ -36,7 +36,7 @@ if isempty(gcp('nocreate'))
         N = feature('numcores'); % fallback se rodar local
     end
     
-    parpool('local', N);
+    parpool('local', 8);
 
 end
 
@@ -126,7 +126,7 @@ end
 % Parameter Sweep Loop: For Each Material Parameter Set
 %--------------------------------------------------------------------------
 
-for param_ind = 1:nParam
+for param_ind = 1:nParam-1
     % --- FEA Simulation or Load Cached Results ---
     if NewVirtualWorkFlag == 1
         % Run FEA simulation and store results for this parameter set
