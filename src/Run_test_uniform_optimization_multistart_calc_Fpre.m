@@ -50,7 +50,7 @@ eps = 1000;
 nMaterial = 11;   
 
 % Percentage of dirty data
-noise_percent = 1;
+noise_percent = 5;
 sigma_additive = 0;
 
 %--------------------------------------------------------------------------
