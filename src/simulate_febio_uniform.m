@@ -24,7 +24,6 @@ function [datau, dataF] = simulate_febio_uniform(mydir, mymodel, matparam_sweep,
 %   The function modifies the material block for a specific parameter combination,
 %   runs a FEBio simulation, parses the results, and handles errors gracefully.
 
-
 global last_time
 
 % Preallocate storage for results
@@ -45,46 +44,8 @@ Nline = numel(data);
 % Prepare matrix of parameter values corresponding to this simulation
 matparam_line = matparam_sweep(param_ind,:);
 matparam = ground_truth_mat;
-<<<<<<< HEAD
-param2change = changing_matrix{1,param_ind};
-matparam(param2change,:) = matparam_line;
-
-%OBS%
-%THIS PART IS HARDCODED TO ADDRESS THE SCLERA BEING SPLIT IN THREE%
-
-% Performing operations between parameters
-totalNparam =length(matparam(1,:));
-%Changing the K column from the matparam_complete
-totalNmat = length(matparam(:,1));
-
-for idx_Mat = 1:totalNmat
-    tgt_row = ops_matrix_struct(idx_Mat).tgt_row;
-    src_row = ops_matrix_struct(idx_Mat).src_row;
-    A_matrix = ops_matrix_struct(idx_Mat).A;
-    B_matrix = ops_matrix_struct(idx_Mat).B;
-
-    src_mult = zeros(1,totalNparam);
-
-    if isempty(A_matrix)
-        continue
-    end
-
-    for n_src = 1:length(src_row)
-    
-       src_mult = src_mult + matparam(src_row(n_src),:)* A_matrix{n_src}; 
-    
-    end
-
-    matparam(tgt_row,:) = (src_mult + matparam(tgt_row,:) * B_matrix)';
-end
-
-
-
-
-=======
 param2change = changing_matrix{1, param_ind};
 matparam(param2change, :) = matparam_line;
->>>>>>> a0315fe4b174e401a385190ce0384b108d336df1
 
 % Apply any defined parameter operations before simulation
 totalNparam = length(matparam(1, :));  % Number of properties per material

@@ -28,9 +28,9 @@ path.results = fullfile(path.parent, 'results');
 path.VF = fullfile(path.parent, 'VF');
 
 % FIle names
-mymodel = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions.feb';      % FE model file
-myexpdata = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions.log';    % Experimental data file
-matFile = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions.mat'; % Pre-Saved model data
+mymodel = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).feb';      % FE model file
+myexpdata = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).log';    % Experimental data file
+matFile = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).mat'; % Pre-Saved model data
 
 %p_app = [0.15,0.02];                       % Reference and applied pressure
 p_app=[-2.0;0.0];
@@ -50,7 +50,7 @@ eps = 1000;
 nMaterial = 11;   
 
 % Percentage of dirty data
-noise_percent = 1;
+noise_percent = 0;
 sigma_additive = 0;
 
 %--------------------------------------------------------------------------
