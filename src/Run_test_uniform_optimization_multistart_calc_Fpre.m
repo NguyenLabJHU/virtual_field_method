@@ -50,7 +50,7 @@ eps = 1000;
 nMaterial = 11;   
 
 % Percentage of dirty data
-noise_percent = 1;
+noise_percent = 0;
 sigma_additive = 0;
 
 %--------------------------------------------------------------------------
@@ -58,20 +58,14 @@ sigma_additive = 0;
 %--------------------------------------------------------------------------
 % Gauss order
 gauss_order = 2;       % Selects 2x2x2 Gauss quadrature for elements
+nDim = 3;
 
 % Bounds for optimization variables [c1, c2]
-
 lb = [0.6, 0.6,0.6, 0.6,0.6, 0.6,0.6, 0.6];   % lower bounds
 ub = [1.4, 1.4,1.4, 1.4,1.4, 1.4,1.4, 1.4];   % upper bounds
 Normalizer = [50,100,3266,8.62,172.4,308,5638,11.4];
 corresponding = [1,2,2,3,3,4,4,4];
 parameter = {'c1','c1','k','c1','k','c','k1','k2'};
-
-%lb = [0.6, 0.6];   % lower bounds
-%ub = [1.4, 1.4];   % upper bounds
-%Normalizer = [0.1,0.5];
-%corresponding = [1,2];
-%parameter = {'c1','c1'};
 
 count_corresponding = zeros(size(corresponding));
 is_unique = zeros(size(corresponding)); 
@@ -86,6 +80,19 @@ changing_matrix = [num2cell(corresponding); num2cell(count_corresponding);...
 
 
 nvars = numel(lb);  % number of variables
+
+%% ---  How to simplify the model ---
+% Do I want to simplify the model?
+run_simple_model = 'True';
+
+% Which material we want to remove?
+%rParts = {{'Part1','Part3','Part4','Part5'}};
+rParts = {{'EB36(2)','EB8','EB35(2)','EB7','EB34(1)','EB6','EB34(1)_1','EB34(1)_2','EB6(1)','EB6(2)'}};
+
+
+% Which surfaces will be applied the load?
+%mat_surface_traction = {'Mat1_Mat2'};
+mat_surface_traction = {'OCT_Cut'};
 
 %% --- Operations for copying and combining parameters in the parameter matrix ---
 target_rows = {[5], [6], [7], [8]};
@@ -140,7 +147,7 @@ start_points = bsxfun(@plus, lb, bsxfun(@times, lhs_points, (ub - lb)));
 randomized_order = randperm(size(start_points, 1));
 start_points = start_points(randomized_order, :);
 
-%start_points(1,:) = [1,1,1,1,1,1,1,1]; 
+start_points(1,:) = [1,1,1,1,1,1,1,1]; 
 
 % Prepend custom start point
 totalRunCount = 2; % Starts at 2 to skip calculation of the virtual field
@@ -172,15 +179,19 @@ else
     [model, edata] = preliminary_reading(path.data, mymodel, myexpdata,edata,model,prestress_time);
     save(fullMatPath, 'model', 'edata');
     disp('Read experiment dataparsed and saved results.');
-end;
+end
+
+%% --- Prepare the simplified version (for a regional part analyis)
+[s_model,s_edata] = simpleModel(model, edata, mat_surface_traction ,rParts);
 
 %% --- Dirty the data for robustness --------------------------------------
 edata = dirty_steps_edata(edata, model, noise_percent, sigma_additive);
 
 %% --- Define the cost function (anonymous wrapper)  ----------------------
 cost_function = @(x) get_cost2regions_calc_Fpre(...
-    path, mymodel, model, edata, x, p_app, gauss_order, prestress_time,eps,...
-    changing_matrix,Normalizer,ops_matrix_struct);
+    path, mymodel, model, s_model, s_edata, x, p_app, gauss_order, prestress_time,eps,...
+    changing_matrix,Normalizer,ops_matrix_struct, run_simple_model,...
+    mat_surface_traction,rParts,nDim);
 
 %% --- Perform optimization separately at each starting point ---
 start_points(1,:)

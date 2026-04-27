@@ -81,14 +81,14 @@ elapsed = toc(t_pre_read);
 
 fprintf('Reading the cumulative Fpre took %.3f seconds\n', elapsed);
 
-coords = model.nodes(:,2:4);                 % Get reference coordinates from model
+coords0 = model.nodes(:,2:4);                 % Get reference coordinates from model
 nSteps = numel(edata.steps);                 % Total number of time steps
 
 % ---- Find the corresponding index for the prestress time ----
 % Searches for the last edata.times <= prestress_time (handles floating point times robustly)
 prestress_step = find(edata.times < prestress_time, 1, 'last'); % find last time less than or equal to target
 if isempty(prestress_step)
-    error('Prestress time is earlier than the provided dataset.');
+    fprintf('Prestress time is earlier than the provided dataset.');
 end
 
 nElem = size(model.elements,1);              % Number of elements
@@ -105,13 +105,16 @@ end
 
 % ---- Step through every time step to compute Fpre ----
 for step = 1:nSteps
-    if step <= prestress_step
-        % --- Before (and at) prestress step: accumulate Fpre ---
-        disp = edata.steps{step}.results.edisp;               % Get node displacements for this step
-        
-        % Compute deformation gradient at each element, gauss point (returns nElem x nGauss x 3 x 3 array)
-        [Fcurr, ~] = compute_deformation_gradient(model, coords, disp, gauss_order);
+    
+    % --- Before (and at) prestress step: accumulate Fpre ---
+    disp = edata.steps{step}.results.edisp;               % Get node displacements for this step
+    
+    % Compute deformation gradient at each element, gauss point (returns nElem x nGauss x 3 x 3 array)
+    [Fcurr, ~] = compute_deformation_gradient(model, coords0, disp, gauss_order);
+    
+    edata_exp.steps{step}.results.eFel_calc = Fcurr;
 
+    if step <= prestress_step
         % Accumulate total Fpre by multiplying previous Fpre * current F (matrix product)
         Fpre = zeros(nElem, nGauss, 3, 3);
         for e = 1:nElem
@@ -124,7 +127,7 @@ for step = 1:nSteps
 
         % Store cumulative Fpre inside edata struct for this step
         edata_exp.steps{step}.results.eFpre_calc = Fpre;
-        
+               
         % Save current cumulative Fpre for next step's initialization
         Fpre_last = Fpre;
 
@@ -135,8 +138,16 @@ for step = 1:nSteps
         
     else
         % --- After prestress: Fpre is frozen ---
-        % Store the prestress Fpre value at subsequent timesteps
-        edata_exp.steps{step}.results.eFpre_calc = Fpre_frozen;
+        % Store the prestress Fpre value at subsequent timesteps      
+        if exist('Fpre_frozen', 'var') && ~isempty(Fpre_frozen)
+            edata_exp.steps{step}.results.eFpre_calc = Fpre_frozen;
+        else
+            % Se Fpre_frozen doesnt exists create a eye matrix
+            Fpre_frozen = repmat(eye(3), [nElem, nGauss, 1, 1]);
+            edata_exp.steps{step}.results.eFpre_calc = Fpre_frozen;
+        end
+            
+
     end
 
     % Passing to edata_exp the information of the current Fpre simualtion    
