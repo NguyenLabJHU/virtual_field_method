@@ -19,7 +19,7 @@ function prop = mat_change2prop(mat_type, mat_change)
                 case 'k'
                     prop = 2;
             end
-        case "mooney-rivlin"
+        case {"mooney-rivlin", "coupled-mooney-rivlin"}
             switch lower(mat_change)
                 case 'c1'
                     prop = 1;
@@ -59,6 +59,13 @@ function prop = mat_change2prop(mat_type, mat_change)
                     prop = 5;
                 case 'gamma'
                     prop = 6;
+            end
+        case {"linear-elastic","linear elastic","le"}
+            switch lower(mat_change)
+                case 'e'
+                    prop = 1;
+                case {'v','nu','poisson'}
+                    prop = 3;
             end
     end
 end
