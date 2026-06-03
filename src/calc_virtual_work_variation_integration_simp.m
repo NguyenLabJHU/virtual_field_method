@@ -1,5 +1,5 @@
- function [IVW, EVW, TieVW, cost_func] = calc_virtual_work_variation_integration2(path, mymodel, model, ...
-    edata2, matparam, matparam_sweep,ground_truth_mat, p_app, gauss_order,eps,changing_matrix,ops_matrix_struct)
+ function [IVW, EVW, TieVW, cost_func] = calc_virtual_work_variation_integration_simp(path, mymodel, model, ...
+    edata2, matparam, matparam_sweep,ground_truth_mat, p_app, gauss_order,eps,changing_matrix,ops_matrix_struct,full_model,nodal_force)
 %--------------------------------------------------------------------------
 % calc_virtual_work_variation_integration2
 %--------------------------------------------------------------------------
@@ -26,7 +26,6 @@
 
 global totalRunCount ForwardCount IVW_vector EVW_vector TieVW_vector prestress_time   % Track across parameter sweeps
 
-
 % Kick off parallel pool
 if isempty(gcp('nocreate'))
 
@@ -39,7 +38,6 @@ if isempty(gcp('nocreate'))
     parpool('local', 8);
 
 end
-
 
 %--------------------------------------------------------------------------
 % Mesh and Simulation Geometry Setup
@@ -215,8 +213,9 @@ for param_ind = 1:nParam-1
     %--------------------------------------------------------------------------
     
     % Construct the full paths to the files inside the VF subfolder
-    energyFile = fullfile(path.VF, ['EVW_cached_', modelName, '.csv']);
-    tieFile    = fullfile(path.VF, ['TieVW_cached_', modelName, '.csv']);
+    energyFile = fullfile(path.VF, ['EVW_cached_simp_', modelName, '.csv']);
+    tieFile    = fullfile(path.VF, ['TieVW_cached_simp_', modelName, '.csv']);
+    nodalFile    = fullfile(path.VF, ['Nodal_VW_cached_simp_', modelName, '.csv']);
 
     % Check if the cache file for the EVW exists before attempting to read
     if isfile(energyFile)
@@ -228,6 +227,12 @@ for param_ind = 1:nParam-1
          TieVW_out = readmatrix(tieFile);
     end
 
+    % Check if the cache file for the SimpEVW exists before attempting to read
+    if isfile(nodalFile) && ForwardCount ~= 1
+         nodal_VW_out = readmatrix(nodalFile);
+    end
+    
+
     %% ----------------- Internal Virtual Work Calculation -----------------
     IVW = 0;                           % Accumulator for Internal Virtual Work   
     dimension_hex = 3;                 % 3D brick/hexahedral element
@@ -238,6 +243,7 @@ for param_ind = 1:nParam-1
 
     % ---- Loop over all volumetric elements ----
     parfor k = 1:nel
+
         ielem = model.elements(k,1);
         imatprop = zeros(size(model.matprop,2),1); 
         element_vf_norm_sq = 0;        % Virtual strain norm squared per element
@@ -284,21 +290,23 @@ for param_ind = 1:nParam-1
             jac_det      = det(Jac_matrix);
             jac_weighted = jac_det * weight;
 
+
+            logical_mask = full_model.elements(:, 1) == ielem;
+
             % Extract deformation gradient and prestrain at this element/Gauss pt
             if abs(prestress_time) > 1e-6
-                mFbar = squeeze(F_all(k,gp,:,:));           % from simulation
-                mFpre = squeeze(F_all_pre(k,gp,:,:));       % from experiment
-                F     = mFbar * mFpre;                      % total F
+                mFbar = squeeze(F_all(k,gp,:,:));                   % from simulation
+                mFpre = squeeze(F_all_pre(logical_mask,gp,:,:));       % from experiment
+                F     = mFbar * mFpre;                              % total F
             else
                 mFbar = squeeze(F_all(k,gp,:,:));           % from simulation
                 mFpre = eye(3);                             % from experiment
                 F     = mFbar * mFpre;                      % total F
             end    
-            dgum  = squeeze(delta_e(k,gp,:,:));         % Virtual strain tensor
+            dgum  = squeeze(delta_e(logical_mask,gp,:,:));         % Virtual strain tensor
 
             % Cauchy stress tensor
             sigma =  computeStress(F, model,matnum, imatprop,ielem,gp);
-            %sigma = (1.0/J) * (2*c1*(B-Id) + kappa*log(J)*Id);
 
             % Compute virtual work (trace of sigma*delta_e)
             temp = sum(sum(dgum .* sigma)); 
@@ -317,10 +325,10 @@ for param_ind = 1:nParam-1
     end
 
     % Getting the total value after parfor
-    IVW        = sum(element_IVW_array);
+    IVW = sum(element_IVW_array);
 
     %% ----------------- External Virtual Work Calculation (Surface) -----------------
-    if isfile(energyFile) 
+    if isfile(energyFile) && ForwardCount ~= 1
         
         EVW = EVW_out(param_ind);
 
@@ -385,12 +393,13 @@ for param_ind = 1:nParam-1
                 end
             
                 EVW = EVW + surface_EVW;               % Add surface element EVW
-                EVW_vector(k, param_ind) = surface_EVW;
+                EVW_vector(nLoad_idx,k, param_ind) = surface_EVW;
                 AreaS = AreaS + surface_Area;
             end   
         end
         EVW_out(param_ind) = EVW;
     end
+
     %% ----------------- External Virtual Work Calculation (Tie-Contact) -----------------
     if isfile(tieFile) && ForwardCount ~= 1
         
@@ -523,11 +532,62 @@ for param_ind = 1:nParam-1
 
     end
 
-%% ----------------------------- Cost Function Calculation and Output ---------------------------  
-    cost_func = ((IVW - EVW -TieVW)/EVW)^2 + cost_func;      % L2 cost function for virtual work balance
+%% ----------------- Nodal Force Virtual Work (Subset Interface) -----------------
+    if isfile(nodalFile) && ForwardCount ~= 1
+        
+        nodal_VW = nodal_VW_out(param_ind);
+
+    else     
+
+    
+        % Number of traction surfaces
+        nLoad_nodal = length(edata2); 
+        % Initialize vector to store virtual work per load surface
+        nodal_VW_vector = zeros(nLoad_nodal, 1);
+    
+        parfor nLoad_idx = 1:nLoad_nodal
+            % Extract interface connectivity (nodes in columns 2 to 5)
+            conn = edata2(nLoad_idx).surface_traction.conn(:, 2:5);
+            
+            % Identify unique node IDs within this interface
+            interface_nodes = unique(conn(:));
+            
+            % Filter for valid node IDs (ensure they are positive and within range)
+            interface_nodes = interface_nodes(interface_nodes > 0);
+            
+            % Compute Virtual Work for this subset
+            % Perform element-wise multiplication and double sum for efficiency
+            work_subset = sum(sum(nodal_force(interface_nodes, :) .* delu(interface_nodes, :)));
+            
+            % Store the result in the vector
+            nodal_VW_vector(nLoad_idx) = work_subset;
+        end
+    
+        % Final sum of the nodal virtual work contributions
+        nodal_VW = sum(nodal_VW_vector);
+        nodal_VW_out(param_ind) = nodal_VW;
+
+    end
+    
+    
+    
+    
+    
+    
+    %% ----------------------------- Cost Function Calculation and Output ---------------------------  
+    if EVW ==0 || isfile(fullfile(path.VF, ['EVW_cached_', modelName, '.csv']))
+        EVW_original = readmatrix(fullfile(path.VF, ['EVW_cached_', modelName, '.csv']));
+        EVW_denom = EVW_original(param_ind);
+    else
+        EVW_denom = EVW;
+    end
+
+    add_cost = ((IVW - EVW -TieVW -nodal_VW)/(EVW_denom))^2;
+    
+    cost_func = add_cost + cost_func;      % L2 cost function for virtual work balance
 
     time5 = toc;
-    fprintf('EVW/IVW calculation took %.4f s\n', time5);    
+        fprintf('EVW/IVW calculation took %.4f s\n', time5);    
 end
 
 cost_func = sqrt(cost_func);                    % Final cost function output
@@ -546,12 +606,18 @@ end
 %--------------------------------------------------------------------------
 % Cache Simulation Output EVW and TieVW (if simulation just performed)
 %--------------------------------------------------------------------------
-if ~isfile(energyFile)
-    writematrix(EVW_out,   energyFile);     % Cache EVW
+
+
+if ~isfile(energyFile) || ForwardCount == 1
+    writematrix(EVW_out,energyFile);     % Cache EVW
 end
 
 if ~isfile(tieFile) || ForwardCount == 1
     writematrix(TieVW_out, tieFile);        % Cache TieVW
+end
+
+if ~isfile(nodalFile) || ForwardCount == 1
+    writematrix(nodal_VW_out, nodalFile);        % Cache simpEVW
 end
 
 

@@ -44,10 +44,12 @@ nen = 8; % hex8 assumed
 elements = zeros(totalNel, nen+1);
 elemmat  = zeros(totalNel, 1);
 count = 0;
+elements_per_block = cell(1, Nblocks);
 
 for b = 0:Nblocks-1
     elemBlock = elBlocks.item(b);
     elems = elemBlock.getElementsByTagName('elem');
+    elements_in_block = zeros(Nel_per_block(b+1),nen+1);
     for e = 0:elems.getLength-1
         elem = elems.item(e);
         eid = str2double(elem.getAttribute('id'));
@@ -65,24 +67,39 @@ for b = 0:Nblocks-1
 
         count = count + 1;
         elements(count, :) = [eid, conn(:)'];          % store with proper node order
+
+        elements_in_block(e+1,:) = [eid, conn(:)']; 
     end
+
+    elements_per_block{b+1} = elements_in_block;    
+
 end
 
 %% --------- Surfaces ----------
 surfNodes = xDoc.getElementsByTagName('Surface');
-surfaces = [];
-surfacenames = strings(1, surfNodes.getLength);
-for s = 0:surfNodes.getLength-1
+numSurfs = surfNodes.getLength;
+surfaces = struct('name',cell(1,numSurfs),'conn',cell(1,numSurfs));
+
+for s = 0:numSurfs-1
     surf = surfNodes.item(s);
-    surfName = string(surf.getAttribute('name'));
-    surfacenames(s+1) = surfName;
+    surfName = string(surf.getAttribute('name')); % or use char() if you want
     quads = surf.getElementsByTagName('quad4');
+    quadData = [];  % Collect quad [id, conn] here
+
     for q = 0:quads.getLength-1
         quad = quads.item(q);
         qid = str2double(quad.getAttribute('id'));
         conn = sscanf(char(quad.getTextContent), '%d , %d , %d , %d');
-        surfaces = [surfaces; qid, conn(:).']; %#ok<AGROW>
+        quadData = [quadData; qid, conn(:).']; %#ok<AGROW>
     end
+
+    surfaces(s+1).name = surfName;
+    surfaces(s+1).conn = quadData;
+end
+
+%change from cells to array
+for i = 1:numel(surfaces)
+     surfaces(i).conn = find_surface_elements(surfaces(i).conn, elements);
 end
 
 
@@ -203,11 +220,15 @@ for m = 0:Nmat-1
     if strcmpi(etype_lc, 'hgo unconstrained')
         const_model = "hgo-unconstrained";
     elseif strcmpi(etype_lc, 'coupled mooney-rivlin')
-        const_model = "mooney-rivlin";
+        const_model = "coupled-mooney-rivlin";
+    elseif strcmpi(etype_lc, 'mooney-rivlin')
+        const_model = "mooney-rivlin";    
     elseif strcmpi(etype_lc, 'coupled trans-iso mooney-rivlin')
         const_model = "ti-mooney-rivlin";
     elseif strcmpi(etype_lc, 'neo-hookean')
         const_model = "neo-hookean";
+    elseif strcmpi(etype_lc, 'isotropic elastic') || strcmpi(etype_lc, 'isotropic-elastic')
+        const_model = "linear-elastic";    
     else
         const_model = "unknown";
     end
@@ -219,7 +240,7 @@ for m = 0:Nmat-1
     params = struct;
 
     switch const_model
-        case "mooney-rivlin"
+        case {"mooney-rivlin","coupled-mooney-rivlin"}
             params.C1 = defaultZero(C1);
             params.C2 = defaultZero(C2);
             params.K  = defaultZero(K);
@@ -315,6 +336,13 @@ for m = 0:Nmat-1
                     end
                 end
             end
+
+        case "linear-elastic"
+            params.E = defaultZero(E);
+            params.v = defaultZero(v);
+
+            matprop1(m+1) = params.E;   % E
+            matprop3(m+1) = params.v;   % poisson    
 
         otherwise % neo-hookean fallback if ever needed
             params.E = defaultZero(E);  
@@ -622,6 +650,7 @@ model.surfacesp = surfacesp;
 model.blockname = blockname;
 model.blockmat = blockmat;
 model.blockmatid = blockmatid;
+model.blockelem = elements_per_block;
 model.matname = matname;
 model.matmodel = matmodel;
 model.matid = matid;
@@ -630,8 +659,9 @@ model.psurfid = psurfid;
 model.tie_contact = tie_contact;
 model.fibers = fiber_table;
 model.mat_axis = mat_axis_table;
-model = findSharedSurfaceNode2Node(model, 2, 1); %outer surface to inner surface
+%model = findSharedSurfaceNode2Node(model, 2, 1); %outer surface to inner surface
 model.material_model = materials;
+model.all_surfaces = surfaces;
 
 
 end

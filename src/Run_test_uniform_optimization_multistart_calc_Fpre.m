@@ -28,9 +28,9 @@ path.results = fullfile(path.parent, 'results');
 path.VF = fullfile(path.parent, 'VF');
 
 % FIle names
-mymodel = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions.feb';      % FE model file
-myexpdata = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions.log';    % Experimental data file
-matFile = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions.mat'; % Pre-Saved model data
+mymodel = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).feb';      % FE model file
+myexpdata = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).log';    % Experimental data file
+matFile = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).mat'; % Pre-Saved model data
 
 %p_app = [0.15,0.02];                       % Reference and applied pressure
 p_app=[-2.0;0.0];
@@ -47,27 +47,25 @@ last_time = 2;
 eps = 1000;
 
 % Number of  different material models
-nMaterial = 11;      
+nMaterial = 11;   
+
+% Percentage of dirty data
+noise_percent = 0;
+sigma_additive = 0;
 
 %--------------------------------------------------------------------------
 % Gauss Order for Numerical Integration
 %--------------------------------------------------------------------------
 % Gauss order
 gauss_order = 2;       % Selects 2x2x2 Gauss quadrature for elements
+nDim = 3;
 
 % Bounds for optimization variables [c1, c2]
-
 lb = [0.6, 0.6,0.6, 0.6,0.6, 0.6,0.6, 0.6];   % lower bounds
 ub = [1.4, 1.4,1.4, 1.4,1.4, 1.4,1.4, 1.4];   % upper bounds
 Normalizer = [50,100,3266,8.62,172.4,308,5638,11.4];
 corresponding = [1,2,2,3,3,4,4,4];
 parameter = {'c1','c1','k','c1','k','c','k1','k2'};
-
-%lb = [0.6, 0.6];   % lower bounds
-%ub = [1.4, 1.4];   % upper bounds
-%Normalizer = [0.1,0.5];
-%corresponding = [1,2];
-%parameter = {'c1','c1'};
 
 count_corresponding = zeros(size(corresponding));
 is_unique = zeros(size(corresponding)); 
@@ -82,6 +80,19 @@ changing_matrix = [num2cell(corresponding); num2cell(count_corresponding);...
 
 
 nvars = numel(lb);  % number of variables
+
+%% ---  How to simplify the model ---
+% Do I want to simplify the model?
+run_simple_model = 'True';
+
+% Which material we want to remove?
+%rParts = {{'Part1','Part3','Part4','Part5'}};
+rParts = {{'EB36(2)','EB8','EB35(2)','EB7','EB34(1)','EB6','EB34(1)_1','EB34(1)_2','EB6(1)','EB6(2)'}};
+
+
+% Which surfaces will be applied the load?
+%mat_surface_traction = {'Mat1_Mat2'};
+mat_surface_traction = {'OCT_Cut'};
 
 %% --- Operations for copying and combining parameters in the parameter matrix ---
 target_rows = {[5], [6], [7], [8]};
@@ -125,8 +136,8 @@ else
     rng(task_id);
 end
 
-
 N = 8; % number of random additional points
+
 lhs_points = lhsdesign(N, length(Normalizer));  % generates points in [0,1]
 
 % Scale lhs_points to actual bounds
@@ -152,9 +163,9 @@ outputs = cell(n_start, 1);            % fmincon output structs
 model = struct();                      % model data (nodes, elements, surfaces, etc.)
 edata = struct();                      % simulation data (experimental data or results)
 
-%% --- Load mesh and experimental data --------------------------------------
+%% --- Load mesh and experimental data ------------------------------------
 %           Read Model and Node/Element Data, Compute Cumulative Fpre
-%  --------------------------------------------------------------------------
+%  ------------------------------------------------------------------------
 
 % Loads mesh and log file, including node coordinates, element connectivity, results at timesteps
 fullMatPath = fullfile(path.data, matFile);
@@ -168,12 +179,19 @@ else
     [model, edata] = preliminary_reading(path.data, mymodel, myexpdata,edata,model,prestress_time);
     save(fullMatPath, 'model', 'edata');
     disp('Read experiment dataparsed and saved results.');
-end;
+end
 
-%% --- Define the cost function (anonymous wrapper) ---
+%% --- Prepare the simplified version (for a regional part analyis)
+[s_model,s_edata] = simpleModel(model, edata, mat_surface_traction ,rParts);
+
+%% --- Dirty the data for robustness --------------------------------------
+edata = dirty_steps_edata(edata, model, noise_percent, sigma_additive);
+
+%% --- Define the cost function (anonymous wrapper)  ----------------------
 cost_function = @(x) get_cost2regions_calc_Fpre(...
-    path, mymodel, model, edata, x, p_app, gauss_order, prestress_time,eps,...
-    changing_matrix,Normalizer,ops_matrix_struct);
+    path, mymodel, model, s_model, s_edata, x, p_app, gauss_order, prestress_time,eps,...
+    changing_matrix,Normalizer,ops_matrix_struct, run_simple_model,...
+    mat_surface_traction,rParts,nDim);
 
 %% --- Perform optimization separately at each starting point ---
 start_points(1,:)

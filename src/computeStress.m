@@ -62,15 +62,22 @@ function sigma = computeStress(F, model,mat_idx, imatprop,ielement,gp)
     %% --------- Choosing the material ----------
     % Build matprop struct as expected by the solver
     switch mat_type
+        case "linear-elastic"
+            matprop.E = prop1;   % E
+            matprop.v = prop3;   % poisson
         case "neo-hookean"
             lambda = prop3*prop1/((1+prop3)*(1-2*prop3));
             mu = 0.5*prop1/(1+prop3);
             matprop.mu = mu;
             matprop.k  = lambda;
-        case "mooney-rivlin"
+        case "coupled-mooney-rivlin"
             matprop.C1 = prop1;
             matprop.C2 = prop2;
             matprop.k  = prop3;
+        case "mooney-rivlin"
+            matprop.C1 = prop1;
+            matprop.C2 = prop2;
+            matprop.k  = prop3;    
         case "ti-mooney-rivlin"
             matprop.C1 = prop1;
             matprop.C2 = prop2;
@@ -116,7 +123,7 @@ function sigma = computeStress_core(F, matprop, model)
             kappa = matprop.k;
             sigma = (mu/J) * (B - Id) + (kappa*log(J)/J) * Id;
 
-        case {'mooney-rivlin','mr'}
+        case {'coupled-mooney-rivlin','cmr'}
             C1 = matprop.C1;
             C2 = matprop.C2;
             kappa = matprop.k;
@@ -208,6 +215,51 @@ function sigma = computeStress_core(F, matprop, model)
     
             % Final Cauchy stress (divide by J)
             sigma = sigma / J;
+
+        case {'linear-elastic','linear elastic','le'}
+            E = matprop.E;
+            v = matprop.v;
+
+            Ji = 1.0 / J;
+
+            % lame parameters (same FEBio)
+            lam = Ji*(v*E/((1+v)*(1-2*v)));
+            mu  = Ji*(0.5*E/(1+v));
+
+            % FEBio uses b = LeftCauchyGreen and b2 = b.sqr()
+            trE = 0.5*(trace(B) - 3.0);
+            sigma = B*(lam*trE - mu) + B2*mu;
+
+
+        case {'mooney-rivlin','dmr'}
+            c1 = matprop.C1;
+            c2 = matprop.C2;
+            kappa = matprop.k;
+
+            % --- FEBio: DevLeftCauchyGreen ---
+            Jm23 = J^(-2/3);
+            Bbar  = Jm23 * B;        % deviatoric/isocoric B
+            Bbar2 = Bbar * Bbar;
+
+            I1 = trace(Bbar);
+            I2 = 0.5*(I1*I1 - trace(Bbar2));
+
+            W1 = c1;
+            W2 = c2;
+
+            T = Bbar*(W1 + W2*I1) - Bbar2*W2;
+
+            % deviatoric part: Tdev = T - (tr(T)/3)*I
+            Tdev = T - (trace(T)/3)*Id;
+
+            sigma_dev = (2.0/J) * Tdev;
+
+            % FEBio normalmente soma a parte volumétrica em outro lugar
+            % Se você quer "total stress" com penalidade volumétrica:
+            sigma_vol = (kappa * log(J) / J) * Id;
+
+            sigma = sigma_dev + sigma_vol;    
+
 
         otherwise
             error('Unknown material model: %s', model);
