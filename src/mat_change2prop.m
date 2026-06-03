@@ -19,7 +19,7 @@ function prop = mat_change2prop(mat_type, mat_change)
                 case 'k'
                     prop = 2;
             end
-        case "mooney-rivlin"
+        case {"mooney-rivlin", "coupled-mooney-rivlin"}
             switch lower(mat_change)
                 case 'c1'
                     prop = 1;
