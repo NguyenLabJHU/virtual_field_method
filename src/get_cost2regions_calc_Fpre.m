@@ -77,8 +77,9 @@ function cost = get_cost2regions_calc_Fpre(path, mymodel, model, simp_model,edat
 
             edata_simp = edata_with_Fpre_step_simp;
 
-            nodal_forces = edata_simp.nodal_forces;
-            
+            if run_simple_model == "True"
+                nodal_forces = edata_simp.nodal_forces;
+            end
             % Uncomment for debug:
             fprintf('[Fpre reused at call %d]\n', totalRunCount);
         end
