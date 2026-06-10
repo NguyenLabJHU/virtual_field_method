@@ -34,6 +34,7 @@ dataF = zeros(nel, 19);         % Deformation and gradient data
 nummat = size(changing_matrix, 2);
 
 % Load the model template file
+mymodel = "modeltilde.feb";
 full_unique_model_name = fullfile(mydir, mymodel);
 fid = fopen(full_unique_model_name, 'r');
 data = textscan(fid, '%s', 'Delimiter', '\n', 'CollectOutput', true);
@@ -74,7 +75,7 @@ end
 data = update_material_block_lines(data, matparam, model);
 
 % Write a new .feb (FEBio input) file for this simulation
-unique_variation_name = sprintf('modeltilde.feb'); % Generated filename
+unique_variation_name = sprintf('modeltilde2.feb'); % Generated filename
 full_unique_variation_name = fullfile(mydir, unique_variation_name);
 fid = fopen(full_unique_variation_name, 'w');
 for I = 1:Nline
@@ -84,7 +85,7 @@ fclose(fid);
 
 % Call FEBio to run simulation via command line
 febio_bin = get_febio_path();
-unique_output_name = sprintf('output.txt'); % Generated output log
+unique_output_name = sprintf('output2.txt'); % Generated output log
 full_unique_output_name = fullfile(mydir, unique_output_name);
 febio_cmd = sprintf('"%s" -i "%s" > "%s" 2>&1', ...
     febio_bin, full_unique_variation_name, full_unique_output_name);
@@ -103,7 +104,7 @@ end
 
 %% Parse the output .log file from FEBio to extract results
 % Open output log file for reading
-unique_log_name = sprintf('modeltilde.log'); % The output log file name
+unique_log_name = sprintf('modeltilde2.log'); % The output log file name
 full_unique_log_name = fullfile(mydir, unique_log_name);
 fres = fopen(full_unique_log_name, 'r');
 if fres == -1

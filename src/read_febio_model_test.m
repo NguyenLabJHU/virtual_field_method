@@ -199,7 +199,22 @@ for m = 0:Nmat-1
     K  = readScalar(el, {'k','K'});
     k1  = readScalar(el, {'k1','K1'});
     k2  = readScalar(el, {'k2','K2'});
-    kappa = readScalar(el, {'Kappa','kappa'});
+    %kappa = readScalar(el, {'Kappa','kappa'});
+    kappaNode = el.getElementsByTagName('kappa');
+    if kappaNode.getLength > 0
+        node = kappaNode.item(0);
+        attrType = char(node.getAttribute('type'));
+        valStr = strtrim(char(node.getTextContent));
+        
+        if strcmpi(attrType, 'math')
+            % Evaluate the expression (e.g., '1/3' becomes 0.3333)
+            kappa = eval(valStr); 
+        else
+            kappa = str2double(valStr);
+        end
+    else
+        kappa = 0; 
+    end
     gamma = readScalar(el, {'Gamma','gamma'});
     lam_max = readScalar(el, {'lam_max','lambda_max','lamMax'}); % alias support
     E = readScalar(el, {'E'});

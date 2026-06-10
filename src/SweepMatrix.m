@@ -63,7 +63,7 @@ function [ground_truth_mat, matparam_sweep, matparam_complete] = SweepMatrix(mod
         row_param = changing_matrix{1, col};
         col_param = changing_matrix{2, col};
         matparam_sweep(col, :) = ground_truth_mat(row_param, :);   % Start from ground truth
-        matparam_sweep(col, col_param_prop) = matparam(row_param, col_param);  % Update swept param
+        matparam_sweep(col, col_param_prop) = 1.1*matparam(row_param, col_param);  % Update swept param
 
         % Update complete matrix with new parameter value
         matparam_complete(mat_idx, col_param_prop) = matparam(row_param, col_param);

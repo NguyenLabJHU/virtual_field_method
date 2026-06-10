@@ -163,9 +163,9 @@ end
 
 full_unique_xplt_name = strrep(full_unique_model_name, '.feb', '.xplt');
 
-delete(fullfile(full_unique_model_name));      % Remove unique .feb file
-delete(fullfile(full_unique_log_name));        % Remove unique .log file
-delete(fullfile(full_unique_output_name));     % Remove output .txt file
-delete(fullfile(full_unique_xplt_name));       % Remove output .xplt file
+%delete(fullfile(full_unique_model_name));      % Remove unique .feb file
+%delete(fullfile(full_unique_log_name));        % Remove unique .log file
+%delete(fullfile(full_unique_output_name));     % Remove output .txt file
+%delete(fullfile(full_unique_xplt_name));       % Remove output .xplt file
 
 end

@@ -28,9 +28,9 @@ path.results = fullfile(path.parent, 'results');
 path.VF = fullfile(path.parent, 'VF');
 
 % FIle names
-mymodel = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).feb';      % FE model file
-myexpdata = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).log';    % Experimental data file
-matFile = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).mat'; % Pre-Saved model data
+mymodel = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions_scleraHGO.feb';      % FE model file
+myexpdata = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions_scleraHGO.log';    % Experimental data file
+matFile = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions_scleraHGO.mat'; % Pre-Saved model data
 
 %p_app = [0.15,0.02];                       % Reference and applied pressure
 p_app=[-2.0;0.0];
@@ -63,7 +63,7 @@ nDim = 3;
 % Bounds for optimization variables [c1, c2]
 lb = [0.6, 0.6,0.6, 0.6,0.6, 0.6,0.6, 0.6];   % lower bounds
 ub = [1.4, 1.4,1.4, 1.4,1.4, 1.4,1.4, 1.4];   % upper bounds
-Normalizer = [50,100,3266,8.62,172.4,308,5638,11.4];
+Normalizer = [50,100,3266,8.62,172.4,680,13907,6.2];
 corresponding = [1,2,2,3,3,4,4,4];
 parameter = {'c1','c1','k','c1','k','c','k1','k2'};
 
@@ -83,7 +83,7 @@ nvars = numel(lb);  % number of variables
 
 %% ---  How to simplify the model ---
 % Do I want to simplify the model?
-run_simple_model = 'True';
+run_simple_model = 'False';
 
 % Which material we want to remove?
 %rParts = {{'Part1','Part3','Part4','Part5'}};
@@ -100,12 +100,12 @@ target_rows = {[5], [6], [7], [8]};
 source_rows = {4, 4, 4, 4};
   
 % each matches source_rows index 
-source_cols = { [1 2 3 4], [1 2 3 4] ,[1 2 3 4], [1 2]}; 
+source_cols = { [1 2 3 4], [1 2 3 4] ,[1 2 3 4], [1 2 3 4]}; 
 
-target_cols = {[1 2 3 4], [1 2 3 4] ,[1 2 3 4], [1 1]};
+target_cols = {[1 2 3 4], [1 2 3 4] ,[1 2 3 4], [1 2 3 4]};
 
 % direct copies for 1:4
-weights = {[1 1 1 1], [1 1 1 1] ,[1 1 1 1],[1 0.0031]};   
+weights = {[1 1 1 1], [1 1 1 1] ,[1 1 1 1],[1 1 1 1]};   
 
 % Generating the ops struct
 mat_size=[nMaterial,7];
@@ -117,7 +117,7 @@ options = optimoptions('fmincon', ...
     'Algorithm', 'interior-point', ...
     'FiniteDifferenceType', 'central', ...
     'UseParallel', false, ... % Parallel disabled
-    'MaxFunctionEvaluations', 250, ...
+    'MaxFunctionEvaluations', 150, ...
     'StepTolerance', 1e-3);  
 
 %% --- Generate starting points using Latin Hypercube Sampling ---
@@ -150,7 +150,7 @@ start_points = start_points(randomized_order, :);
 %start_points(1,:) = [1,1,1,1,1,1,1,1]; 
 
 % Prepend custom start point
-totalRunCount = 2; % Starts at 2 to skip calculation of the virtual field
+totalRunCount = 1; % Starts at 2 to skip calculation of the virtual field
 ForwardCount = 1;
 
 %% --- Prepare arrays to hold results ---
