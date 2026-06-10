@@ -36,7 +36,7 @@ if isempty(gcp('nocreate'))
         N = feature('numcores'); % fallback se rodar local
     end
     
-    parpool('local', 16);
+    parpool('local', N);
 
 end
 
