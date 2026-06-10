@@ -150,7 +150,7 @@ start_points = start_points(randomized_order, :);
 %start_points(1,:) = [1,1,1,1,1,1,1,1]; 
 
 % Prepend custom start point
-totalRunCount = 1; % Starts at 2 to skip calculation of the virtual field
+totalRunCount = 2; % Starts at 2 to skip calculation of the virtual field
 ForwardCount = 1;
 
 %% --- Prepare arrays to hold results ---
