@@ -50,7 +50,7 @@ eps = 1000;
 nMaterial = 11;   
 
 % Percentage of dirty data
-noise_percent = 0;
+noise_percent = 1;
 sigma_additive = 0;
 
 %--------------------------------------------------------------------------
@@ -88,7 +88,8 @@ run_simple_model = 'False';
 % Which material we want to remove?
 %rParts = {{'Part1','Part3','Part4','Part5'}};
 rParts = {{'EB36(2)','EB8','EB35(2)','EB7','EB34(1)','EB6','EB34(1)_1','EB34(1)_2','EB6(1)','EB6(2)'}};
-
+%rParts = {{'EB36(2)','EB8','EB35(2)','EB7','EB34(1)','EB6','EB34(1)_1','EB34(1)_2','EB6(1)','EB6(2)'...
+    %'EB15','EB17','EB36','EB37','EB41','EB42','EB30','EB37(1)'}};
 
 % Which surfaces will be applied the load?
 %mat_surface_traction = {'Mat1_Mat2'};
@@ -117,7 +118,7 @@ options = optimoptions('fmincon', ...
     'Algorithm', 'interior-point', ...
     'FiniteDifferenceType', 'central', ...
     'UseParallel', false, ... % Parallel disabled
-    'MaxFunctionEvaluations', 180, ...
+    'MaxFunctionEvaluations', 150, ...
     'StepTolerance', 1e-3);  
 
 %% --- Generate starting points using Latin Hypercube Sampling ---
@@ -186,6 +187,7 @@ end
 
 %% --- Dirty the data for robustness --------------------------------------
 edata = dirty_steps_edata(edata, model, noise_percent, sigma_additive);
+%edata = pure_gaussian_noise_edata(edata, model, noise_percent, sigma_additive);
 
 %% --- Define the cost function (anonymous wrapper)  ----------------------
 cost_function = @(x) get_cost2regions_calc_Fpre(...
