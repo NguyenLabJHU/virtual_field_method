@@ -236,6 +236,8 @@ for param_ind = 1:nParam
 
     [gauss_points_elem, weights_elem] = get_gauss_points(dimension_hex, gauss_order_hex);
 
+    [~, map_to_full] = ismember(model.elements(:,1), full_model.elements(:,1));
+
     % ---- Loop over all volumetric elements ----
     parfor k = 1:nel
 
@@ -285,8 +287,8 @@ for param_ind = 1:nParam
             jac_det      = det(Jac_matrix);
             jac_weighted = jac_det * weight;
 
-
-            logical_mask = full_model.elements(:, 1) == ielem;
+            logical_mask = map_to_full(k);
+            
 
             % Extract deformation gradient and prestrain at this element/Gauss pt
             if abs(prestress_time) > 1e-6
