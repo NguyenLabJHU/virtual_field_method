@@ -124,7 +124,7 @@ end
 % Parameter Sweep Loop: For Each Material Parameter Set
 %--------------------------------------------------------------------------
 
-for param_ind = 1:nParam-1
+for param_ind = 1:nParam
     % --- FEA Simulation or Load Cached Results ---
     if NewVirtualWorkFlag == 1
         % Run FEA simulation and store results for this parameter set
@@ -139,9 +139,9 @@ for param_ind = 1:nParam-1
         fprintf('simulate_febio_uniform took %.4f s\n', time3);
 
         % Save to cache array for this param variation
+        nodedat(:,5:7) = nodedat(:,5:7)-edisp_pre; % Virtual displacement = simulated - reference
         nodedat_out(:,(param_ind-1)*7+1:(param_ind-1)*7+7)    = nodedat;
         elemdat_out(:,(param_ind-1)*19+1:(param_ind-1)*19+19) = elemdat;
-        
     else
         % Load previously cached nodal/element matrix for this param set
         nodedat  = nodedat_cached(:,(param_ind-1)*7+1:(param_ind-1)*7+7);
@@ -159,14 +159,9 @@ for param_ind = 1:nParam-1
     tic
 
     %--------------------------------------------------------------------------
-    % Extract Simulated Nodal/Element Variables
-    %--------------------------------------------------------------------------
-    disp   = nodedat(:,5:7);             % Node ux, uy, uz displacements
-
-    %--------------------------------------------------------------------------
     % Compute Virtual Field: Compare simulation and experiment displacements
     %--------------------------------------------------------------------------
-    delu = disp - edisp;                 % Virtual displacement = simulated - reference
+    delu   = nodedat(:,5:7);                  % Virtual displacement = simulated - reference
        
     % Fieldname for this parameter index
     fieldname = sprintf('param_%d', param_ind);
