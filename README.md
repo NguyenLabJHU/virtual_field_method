@@ -5,7 +5,7 @@ This repository contains the MATLAB implementation of the Virtual Fields Method 
 📁 Repository Structure
 The project is organized into a modular hierarchy to facilitate local development and high-performance computing (HPC):
 
-src/: Core MATLAB scripts and functions, including optimization loops (multistart), stress computation routines, and prestress integration.
+src/: Core MATLAB scripts and functions, including optimization loops, stress computation routines, and prestress integration.
 
 data/: Input files, such as FEBio model files (.feb) containing geometry and fiber definitions, and simulation log files. (Note: Large data files are ignored by Git to maintain repository efficiency).
 
@@ -23,8 +23,8 @@ Main Script: Run src/Run_test_uniform_optimization_multistart_calc_Fpre.m to exe
 🛠 Technical Details
 Solver Compatibility: Designed for seamless integration with FEBio.
 
-Prestress Modeling: The identification process explicitly incorporates prestress to accurately reflect the physiological state of the eye.
+Prestress Modeling: The identification process explicitly incorporates prestress effects.
 
 Optimization: Utilizes optimization strategies to identify material parameters. The effect of prestress is updated after the solver reaches a local minimum.
 
-Virtual Fields: Implements integration-point-based virtual work variations for complex ocular geometries.
+Virtual Fields: Implements integration-point-based virtual work pertubation.
