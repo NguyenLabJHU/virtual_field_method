@@ -1,24 +1,59 @@
 # VFM_JHU
 Ocular Biomechanics: Virtual Fields Method (VFM) Optimization
-This repository contains the MATLAB implementation of the Virtual Fields Method (VFM) applied to ocular tissues. The project focuses on identifying constitutive material properties using finite element modeling and experimental data, specifically accounting for prestress conditions within the ocular structure.
+This repository contains the MATLAB implementation of the Virtual Fields Method (VFM). The project focuses on identifying constitutive material properties using VFM considering the pre-stress effect and considering only data from observable region.
+
 
 📁 Repository Structure
-The project is organized into a modular hierarchy to facilitate local development and high-performance computing (HPC):
+The project is organized into a modular hierarchy:
 
 src/: Core MATLAB scripts and functions, including optimization loops, stress computation routines, and prestress integration.
 
-data/: Input files, such as FEBio model files (.feb) containing geometry and fiber definitions, and simulation log files. (Note: Large data files are ignored by Git to maintain repository efficiency).
+data/: Input files, such as FEBio model files (.feb) containing geometry and fiber definitions, and simulation log files.
 
-results/: Output directory for optimization results and generated .mat files.
+results/: Output directory for optimization results and generated .txt files.
 
 VF/: Cached virtual work components and deformation gradients stored as CSV and MAT files to optimize re-computation times.
 
 resources/: MATLAB project metadata and environment settings.
 
-🚀 Getting Started
-Open Project: Open the VFM_Source_Git.prj file in MATLAB to automatically configure search paths and environment variables.
 
-Main Script: Run src/Run_test_uniform_optimization_multistart_calc_Fpre.m to execute the optimization process.
+🚀 Getting Started
+1. Open the Project
+Before running any scripts, open the VFM_Source_Git.prj file in MATLAB. This will automatically configure the required search paths and environment variables for the project.
+
+2. Add Your Data
+Ensure your Finite Element (FE) model and experimental data files are placed in the data/ folder.
+
+3. Configure the Main Script
+Open the main execution script located at src/Run_test_uniform_optimization_multistart_calc_Fpre.m. You will need to define your input files at the top of the script under the File names section:
+
+Matlab
+mymodel = 'your_model_file.feb';      % Your FE model file
+myexpdata = 'your_exp_data.log';      % Your experimental data file
+matFile = 'your_saved_data.mat';      % Name for the pre-saved model data (created if it doesn't exist)
+4. Adjust Optimization Parameters (Optional)
+Within the same script, you can adjust the optimization settings to fit your specific analysis:
+
+Loads & Conditions: Modify p_app (pressure) and prestress_time.
+
+Optimization Bounds: Adjust the lower (lb) and upper (ub) bounds, as well as the Normalizer array for your material parameters.
+
+Matlab
+corresponding = [1, 2, 2, 3, 3, 4, 4, 4]; % ID of the corresponding material region
+parameter = {'c1', 'c1', 'k', 'c1', 'k', 'c', 'k1', 'k2'}; % Name of the material parameter to optimize
+
+Model Simplification: Toggle run_simple_model and define rParts if you want to perform regional part analysis.
+
+Noise Injection: Adjust noise_percent to test the robustness of the optimization against dirty data.
+
+5. Run the Optimization
+Execute Run_test_uniform_optimization_multistart_calc_Fpre.m.
+
+Note on HPC execution: This script is fully compatible with SLURM job arrays. If run on a cluster, it will automatically pull the SLURM_ARRAY_TASK_ID or SLURM_JOB_ID to generate unique random seeds for the Latin Hypercube Sampling.
+
+6. View Results
+Upon completion, the optimized material parameters, convergence times, and final costs will be printed to the MATLAB Command Window. A complete summary will also be saved automatically to the results/ directory.
+
 
 🛠 Technical Details
 Solver Compatibility: Designed for seamless integration with FEBio.
