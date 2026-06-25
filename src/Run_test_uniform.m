@@ -1,238 +1,222 @@
-%--------------------------------------------------------------------------
-% Main Script: Virtual Field Method Parameter Optimization and Cost Function Analysis
-%--------------------------------------------------------------------------
-% This script conducts a parameter sweep for Neo-Hookean material model fitting using
-% Internal Virtual Work and External Virtual Work techniques and stores results.
-% It uses Latin Hypercube Sampling, calculates cost function, performs post-processing, 
-% and writes results to CSV.
-%--------------------------------------------------------------------------
+% Clear workspace, close figures, close files, and clear command window
+clear all; clc; fclose all;
+global totalRunCount edata_with_Fpre_step ForwardCount last_time nMaterial prestress_time
 
-clear all;
-clc;
-fclose all;
+% Ensure no parallel pool is open (good practice if using UseParallel later)
+if ~isempty(gcp('nocreate'))
+    delete(gcp('nocreate'));
+end
 
-% Declare global variables for tracking across optimization runs
-global totalRunCount IVW_vector EVW_vector last_time TieVW_vector
+%% --- Set up file paths and constants ---
 
-%% --------------------------------------------------------------------------
-% Directories and Data Files
-%--------------------------------------------------------------------------
-% Folder containing your FE model and node/element data logs
-mydir = 'C:\Users\manue\OneDrive - University of Ottawa\JHU\Research\Virtual Field Methods\File\VFM\Matlab_2Variables\Tensile Uniform Load\Two Cost Function\Presstressed_Model\Fpre_calc\';
+path = struct();
 
-% FEBio model file with mesh, boundary, initial/material configuration
-mymodel = 'Not_matching.feb'; 
+% Getting the localion of this file
+fullFilePath = mfilename('fullpath');
 
-% Log file containing "experimental node data" and calculated element strains
-myexpdata = 'Not_matching.log'; 
+% The project is one folder above this one
+projectPath = fileparts(fileparts(fullFilePath));
+proj = matlab.project.loadProject(projectPath);
 
-matFile = 'experiment_results_parsed.mat'; 
+% Get the current working directory 
+path.parent = proj.RootFolder; 
 
-preFile = 'experimental_Fpre.mat';
+% Define the path to the data/src/results/VF folders
+path.data = fullfile(path.parent, 'data');
+path.src = fullfile(path.parent, 'src');
+path.results = fullfile(path.parent, 'results');
+path.VF = fullfile(path.parent, 'VF');
 
-%% --------------------------------------------------------------------------
-% Material Parameter Bounds and Reference Pressure
-%--------------------------------------------------------------------------
+% FIle names
+mymodel = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).feb';      % FE model file
+myexpdata = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).log';    % Experimental data file
+matFile = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions(teste).mat'; % Pre-Saved model data
 
-% Reference and applied pressure (p_ref is unused here) 
-p_app = -0.003;          % Applied pressure
-%p_app=[0.15;0.02];
-
+%p_app = [0.15,0.02];                       % Reference and applied pressure
+p_app=[-2.0;0.0];
 
 % Last physical time at which prestress is calculated/frozen
 prestress_time = 1.0;
+%prestress_time = 0.0;
 
 % Last Time of simulation
-last_time = 2;
 %last_time = 1.5;
+last_time = 2;
 
 % Penalty Factor for the contact
 eps = 1000;
 
-%% --------------------------------------------------------------------------
+% Number of  different material models
+nMaterial = 11;   
+
+% Percentage of dirty data
+noise_percent = 0;
+sigma_additive = 0;
+
+%--------------------------------------------------------------------------
 % Gauss Order for Numerical Integration
 %--------------------------------------------------------------------------
+% Gauss order
 gauss_order = 2;       % Selects 2x2x2 Gauss quadrature for elements
+nDim = 3;
 
-%% --------------------------------------------------------------------------
-% Latin Hypercube Sampling for Design of Experiments
-%--------------------------------------------------------------------------
-nSamples = 50;        % Number of random parameter samples
+% Bounds for optimization variables [c1, c2]
+lb = [0.6, 0.6,0.6,0.6, 0.6, 0.6,0.6, 0.6];   % lower bounds
+ub = [1.4,1.4,1.4, 1.4,1.4, 1.4,1.4, 1.4];   % upper bounds
+Normalizer = [50,100,3266,8.62,172.4,308,5638,11.4];
+corresponding = [1,2,2,3,3,4,4,4];
+parameter = {'c1','c1','k','c1','k','c','k1','k2'};
 
-nMaterial = 8;       % Number of  different material models
+count_corresponding = zeros(size(corresponding));
+is_unique = zeros(size(corresponding)); 
 
-% Parameter bounds [lower, upper] for c1 and c2 (shear moduli)
-lb = [0.1, 0.2,0.1,0.1,0.2,0.2,0.2,0.2];     % Lower bounds for [c1, c2]
-ub = [0.3, 0.5,0.3,0.3,0.5,0.5,0.5,0.5];     % Upper bounds for [c1, c2]
-%lb = [0.05, 0.3];   % lower bounds
-%ub = [0.3,  1.0];   % upper bounds
-
-
-% Ground-truth parameters
-gt = [0.25,0.36,0.3,0.25,0.3,0.3,0.3,0.3];
-%gt = [0.1,0.5];
-
-% Virtual Work Parameter Variation
-virtual_work_parameters = [0.1729824472142898,0.254981153753818,0.204602575103828,...
-    0.1511037795764970,0.256911776087602,0.393591407063561,0.445408049930159,0.288630749044160];
-
-%virtual_work_parameters = [0.212829455,	0.554808007] ;   
-
-% Generate Latin Hypercube samples (efficient space-filling design)
-lhs_matrix = lhsdesign(nSamples, nMaterial);
-
-% Scaling to c_i range
-for i=1:nMaterial
-    lhs_matrix(:,i) = lb(i) + (ub(i) - lb(i)) * lhs_matrix(:,i);
+for i = 1:length(corresponding)
+    count_corresponding(i) = sum(corresponding(1:i) ==corresponding(i));
+    is_unique(i) = sum(corresponding == corresponding(i)) == 1;
 end
 
-% Including the ground-truth for verification
-lhs_matrix = [lhs_matrix;gt];
-
-parameters = sortrows(lhs_matrix, 1);
-
-parameters = [virtual_work_parameters;parameters];
+changing_matrix = [num2cell(corresponding); num2cell(count_corresponding);...
+    num2cell(is_unique);parameter];
 
 
+nvars = numel(lb);  % number of variables
 
-%% --------------------------------------------------------------------------
-% Allocate Storage for Results
-%--------------------------------------------------------------------------
-nruns_c1 = length(parameters(:,1));
-nruns = nruns_c1;                                         % Total number of parameter combinations
+%% ---  How to simplify the model ---
+% Do I want to simplify the model?
+run_simple_model = 'No';
 
-IVW = zeros(1, nruns);                                    % Internal Virtual Work (per run)
-EVW = zeros(1, nruns);                                    % External Virtual Work (per run)
-TieVW = zeros(1, nruns);                                  % Tie Contact Virtual Work (per run)
-cost_func = zeros(1, nruns);                              % Cost function: |IVW - EVW|^2 (per run)
-model = struct();                                         % model data (nodes, elements, surfaces, etc.)
-edata = struct();                                         % simulation data (experimental data or results)
+% Which material we want to remove?
+%rParts = {{'Part1','Part3','Part4','Part5'}};
+rParts = {{'EB36(2)','EB8','EB35(2)','EB7','EB34(1)','EB6','EB34(1)_1','EB34(1)_2','EB6(1)','EB6(2)'}};
 
 
+% Which surfaces will be applied the load?
+%mat_surface_traction = {'Mat1_Mat2'};
+mat_surface_traction = {'OCT_Cut'};
 
-totalRunCount = 2                                        % Run counter
+%% --- Operations for copying and combining parameters in the parameter matrix ---
+target_rows = {[5], [6], [7], [8]};
 
-%% --------------------------------------------------------------------------
-% Read Model and Node/Element Data, Compute Cumulative Fpre
-%  --------------------------------------------------------------------------
+source_rows = {4, 4, 4, 4};
+  
+% each matches source_rows index 
+source_cols = { [1 2 3 4], [1 2 3 4] ,[1 2 3 4], [1 2]}; 
+
+target_cols = {[1 2 3 4], [1 2 3 4] ,[1 2 3 4], [1 1]};
+
+% direct copies for 1:4
+weights = {[1 1 1 1], [1 1 1 1] ,[1 1 1 1],[1 0.0031]};   
+
+% Generating the ops struct
+mat_size=[nMaterial,7];
+ops_matrix_struct = create_ops(target_rows, target_cols, source_rows, source_cols, weights,mat_size);
+
+%% --- Set fmincon optimization options ---
+options = optimoptions('fmincon', ...
+    'Display', 'iter', ...
+    'Algorithm', 'interior-point', ...
+    'FiniteDifferenceType', 'central', ...
+    'UseParallel', false, ... % Parallel disabled
+    'MaxFunctionEvaluations', 150, ...
+    'StepTolerance', 1e-3);  
+
+%% --- Generate starting points using Latin Hypercube Sampling ---
+% randomize based on the ID
+task_id = str2double(getenv('SLURM_ARRAY_TASK_ID'));
+if isnan(task_id)
+    % This isn't a job array, fallback to unique seed from JOBID or time:
+    jobid = str2double(getenv('SLURM_JOB_ID'));
+    if isnan(jobid)
+        % Last resort: use time-based seed
+        rng('shuffle');
+    else
+        rng(jobid);
+    end
+else
+    rng(task_id);
+end
+
+N = 2; % number of random additional points
+
+lhs_points = lhsdesign(N, length(Normalizer));  % generates points in [0,1]
+
+% Scale lhs_points to actual bounds
+start_points = bsxfun(@plus, lb, bsxfun(@times, lhs_points, (ub - lb)));
+
+% Randomize the row order
+randomized_order = randperm(size(start_points, 1));
+start_points = start_points(randomized_order, :);
+
+start_points(2,:) = [1,1,1,1,1,1,1,1]; 
+%start_points(2,:) = [1,1,1,1,1,0.603,0.601,1]; 
+
+% Prepend custom start point
+totalRunCount = 1; % Starts at 2 to skip calculation of the virtual field
+ForwardCount = 1;
+
+%% --- Prepare arrays to hold results ---
+n_start = size(start_points, 1);       % number of start points
+run_times = zeros(n_start, 1);         % time taken for each run
+x_opts = zeros(n_start, nvars);        % each run's optimum x values
+fvals = zeros(n_start, 1);             % each run's minimum cost
+exitflags = zeros(n_start, 1);         % fmincon exit flags
+outputs = cell(n_start, 1);            % fmincon output structs
+model = struct();                      % model data (nodes, elements, surfaces, etc.)
+edata = struct();                      % simulation data (experimental data or results)
+
+%% --- Load mesh and experimental data ------------------------------------
+%           Read Model and Node/Element Data, Compute Cumulative Fpre
+%  ------------------------------------------------------------------------
+
 % Loads mesh and log file, including node coordinates, element connectivity, results at timesteps
-if isfile(matFile)
+fullMatPath = fullfile(path.data, matFile);
+if isfile(fullMatPath)
     % If the results file exists, load the data
-    loaded = load(matFile);           % Loads to a struct 'loaded'
+    loaded = load(fullMatPath);           % Loads to a struct 'loaded'
     model = loaded.model;
     edata = loaded.edata;
     disp('Loaded model and edata from saved .mat file.');
 else
-    [model, edata] = preliminary_reading(mydir, mymodel, myexpdata,edata,model);
-    save(matFile, 'model', 'edata');
+    [model, edata] = preliminary_reading(path.data, mymodel, myexpdata,edata,model,prestress_time);
+    save(fullMatPath, 'model', 'edata');
     disp('Read experiment dataparsed and saved results.');
 end
 
+%% --- Prepare the simplified version (for a regional part analyis)
+[s_model,s_edata] = simpleModel(model, edata, mat_surface_traction ,rParts);
 
+%% --- Dirty the data for robustness --------------------------------------
+edata = dirty_steps_edata(edata, model, noise_percent, sigma_additive);
 
-%% --------------------------------------------------------------------------
-% Main Parameter Sweep Loop
-%--------------------------------------------------------------------------
-for i = 1:nruns
-    for k = 1:nMaterial  
+%% --- Define the cost function (anonymous wrapper)  ----------------------
+cost_function = @(x) get_cost2regions_calc_Fpre(...
+    path, mymodel, model, s_model, s_edata, x, p_app, gauss_order, prestress_time,eps,...
+    changing_matrix,Normalizer,ops_matrix_struct, run_simple_model,...
+    mat_surface_traction,rParts,nDim);
 
-        % Assign material properties for plate and inclusion for this run
-        matparam(k,1) = parameters(i,k);
-        matparam(k,2) = parameters(i,k) * 10000;
+%% --- Perform calculation of the cost function for separately at each starting point ---
+start_points(1,:)
+t=tic; % Start timing
+for i = 1:n_start
+    fprintf('Evaluating the cost funciton at %d/%d...\n', i, n_start);
 
-    end
+    x = start_points(i,:) % Parameter vector
+    fval = cost_function(x) % Evaluate the cost function with no optimization
 
-    % Compute cumulative Fpre up to prestress_time, and freeze beyond
-    edata = accumulate_Fpre_from_edata(mydir, mymodel, gauss_order, prestress_time,matparam,edata);
+    fvals(i) = fval;       % Save the calculated cost
 
-    % Calculate virtual work quantities and cost function for current parameter set
-    % IVW: Internal Virtual Work, EVW: External Virtual Work
-    % cost_func: squared error of IVW vs. EVW (to be minimized)
-    [IVW(totalRunCount), EVW(totalRunCount),TieVW(totalRunCount) ,cost_func(totalRunCount)] = ...
-        calc_virtual_work_variation_integration2(mydir, mymodel, model, edata, matparam, p_app, gauss_order,eps);
+    x_opts(i,:) = x;       % Save the input vector
 
-    
-    % Store material parameters for this run
-    param_row = matparam(:,1)'
-    if ~exist('paramRuns', 'var') || isempty(paramRuns)
-        paramRuns = param_row;
-    else
-        paramRuns = [paramRuns; param_row];
-    end
-    % Increment run counter
-    totalRunCount = totalRunCount + 1
-    
+    %Refreshing counters
+    totalRunCount = 2;
+    ForwardCount = 1;
+
 end
 
-%% --------------------------------------------------------------------------
-%  Postprocessing: Find Minimum, Prepare Output, File Write, Visualization
-%  --------------------------------------------------------------------------
-
-% ----- Combine vectors into table for output -----
-
-% Generate parameter column names automatically: c1, c2, ..., cn
-paramHeaders = cell(1, nMaterial);
-for k = 1:nMaterial
-    paramHeaders{k} = ['c' num2str(k)];
-end
+t_elapsed = toc(t); % End timing
 
 
-% Other result columns to append
-otherHeaders = {'EVW', 'IVW', 'TieVW', 'cost_func'};
-otherVars = {transpose(EVW(2:end)), transpose(IVW(2:end)), transpose(TieVW(2:end)), transpose(cost_func(2:end))};
+%% --- Print convergence time for each starting point with its cost ---
 
-% Combine parameter columns and other columns into cell array
-data_cells = cell(1, nMaterial + numel(otherVars));
-for k = 1:nMaterial
-    data_cells{k} = paramRuns(:, k);
-end
-for k = 1:numel(otherVars)
-    data_cells{nMaterial + k} = otherVars{k};
-end
-
-% Combine all headers
-allHeaders = [paramHeaders, otherHeaders];
-
-% Create the final table with dynamic headers
-data_table = table(data_cells{:}, 'VariableNames', allHeaders);
-
-% Optionally, write to CSV
-writetable(data_table, 'virtual_work_results.csv');
-
-% ----- Plot: Cost Function vs Modulus c2 ------
-c1= paramRuns(:,1);
-c2= paramRuns(:,2);
-
-figure;
-loglog(c2(1:end), cost_func(2:end), 'b-o', 'LineWidth', 1.5, 'MarkerSize', 6);
-grid on;
-xlabel('Modulus c2', 'FontSize', 12);
-ylabel('Cost Function abs(IVW-EVW)^2', 'FontSize', 12);
-title('Cost Function vs Modulus (Log Scale)', 'FontSize', 14);
-
-% ----- Plot: Cost Function vs Modulus c1 ------
-figure;
-loglog(c1(1:end), cost_func(2:end), 'b-o', 'LineWidth', 1.5, 'MarkerSize', 6);
-grid on;
-xlabel('Modulus c1', 'FontSize', 12);
-ylabel('Cost Function abs(IVW-EVW)^2', 'FontSize', 12);
-title('Cost Function vs Modulus (Log Scale)', 'FontSize', 14);
-
-% ----- Prepare and filter data for 3D visualization (log scale) -----
-valid = (c1 > 0) & (c2 > 0) & (cost_func > 0);
-c1_valid = c1(1:end);
-c2_valid = c2(1:end);
-cost_func_valid = cost_func(2:end);
-
-% ----- Delaunay triangulation for 3D surface plot -----
-tri = delaunay(c1_valid, c2_valid);
-
-figure;
-trisurf(tri, c1_valid, c2_valid, cost_func_valid, ...
-    'FaceColor', [0.2 0.6 0.8], ...
-    'EdgeColor', 'none');
-xlabel('c1'); ylabel('c2'); zlabel('cost\_func');
-title('Cost Function vs. Shear Moduli (Log Scale on All Axes)');
-set(gca, 'XScale', 'log', 'YScale', 'log', 'ZScale', 'log');    % Log scale axes
-light('Position', [1 1 1]); lighting phong; material dull;
-view(3); rotate3d on;
+% Creating out file
+save_optimization_results(path.results, t_elapsed, start_points, fvals, x_opts);

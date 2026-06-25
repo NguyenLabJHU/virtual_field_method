@@ -10,19 +10,6 @@ function cost = get_cost2regions_calc_Fpre(path, mymodel, model, simp_model,edat
     [ground_truth_mat,matparam_sweep,matparam_complete] = SweepMatrix(model,...
         changing_matrix,x,Normalizer,ops_matrix_struct);
 
-
-    % % Kick off parallel pool
-    % if isempty(gcp('nocreate'))
-    % 
-    %     N = str2double(getenv('SLURM_CPUS_PER_TASK'));
-    % 
-    %     if isnan(N) || N == 0
-    %         N = feature('numcores'); % fallback se rodar local
-    %     end
-    % 
-    %     parpool('local', N);
-    % end
-
     
     % Try-catch block: handle potential failures in FEBio or cost calculation routines.
     try
@@ -49,13 +36,6 @@ function cost = get_cost2regions_calc_Fpre(path, mymodel, model, simp_model,edat
               nodal_forces = ForceCalculation.apply_internal_force_matrix(edata_simp, W_matrix);
               f_boundary = ForceCalculation.compute_surface_pressure_forces_exp(simp_model, edata_simp, p_app, gauss_order);       
               nodal_forces = nodal_forces + f_boundary;
-
-               % W_matrix = ForceCalculation.build_internal_force_matrix(model,edata_pre, gauss_order,nDim);
-               % edata_pre = ForceCalculation.overallStress(model, edata_pre,gauss_order,nDim,matparam_complete,prestress_time);
-               % nodal_forces = ForceCalculation.apply_internal_force_matrix(edata_pre, W_matrix);
-               % f_boundary = ForceCalculation.compute_surface_pressure_forces_exp(model, edata_pre, p_app, gauss_order);
-               %      % 
-               % nodal_foces_net = nodal_forces + f_boundary;
 
                 edata_simp.nodal_forces = nodal_forces;
                 edata_with_Fpre_step_simp = edata_simp;
@@ -105,7 +85,7 @@ function cost = get_cost2regions_calc_Fpre(path, mymodel, model, simp_model,edat
             error('NaN or Inf encountered in cost function. Triggering restart.');
         end
 
-        % Take logarithm of cost (for scale, stability, or easier optimization).
+       
         cost = log10(cost_func)
 
         % Debug print (only when totalRunCount == 1 for initialization/testing).

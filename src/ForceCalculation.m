@@ -17,13 +17,13 @@ classdef ForceCalculation
             nGauss = size(gauss_points, 1);
             nNodes = size(ecoords, 1);
             
-            reorder = [1 2 3 6 4 5]; % MATLAB indices (1-based)
+            reorder = [1 2 3 6 4 5]; 
             rows = [];
             cols = [];
             vals = [];
             
             for elem = 1:nElem
-                node_ids = elements(elem, 2:end); % Já está em 1-based
+                node_ids = elements(elem, 2:end); 
                 elem_coords = ecoords(node_ids, :); % (8, 3)
                 for gp = 1:nGauss
                     xi   = gauss_points(gp, 1);
@@ -84,9 +84,9 @@ classdef ForceCalculation
             last_step = length(steps);
             stress_gp = edata.steps{1,last_step}.results.stress_prestress;
             reorder = [1 2 3 6 4 5];
-            stress_gp_perm = stress_gp(:,:,reorder);         % reorganiza componentes
+            stress_gp_perm = stress_gp(:,:,reorder);         % reorganizes components
             stress_gp_reshape = permute(stress_gp_perm, [3 2 1]);     % comp, gp, elem
-            stress_gp_flat = reshape(stress_gp_reshape, [], 1);       % vetor coluna, igual Python flatten
+            stress_gp_flat = reshape(stress_gp_reshape, [], 1);       % column vector, like Python flatten
             forces_flat = W * stress_gp_flat;
             nNodes = length(forces_flat)/3;
             nodal_forces = reshape(forces_flat, 3, nNodes)';
@@ -95,64 +95,64 @@ classdef ForceCalculation
         function f_boundary = compute_surface_pressure_forces_exp(model, edata, p_app, gauss_order)
             % model.surfacesp - cell array, each entry is [element_number, node1, node2, node3, node4]
             % ecoords - [nNodes x 3]
-            % pressure_value - [2 x nPressureSamples] (primeira linha: pressão; segunda linha: tempo)
-            % gauss_order - quadratura (ex: 2)
-            % time - instante          
+            % pressure_value - [2 x nPressureSamples] (first row: pressure; second row: time)
+            % gauss_order - quadrature (e.g.: 2)
+            % time - time instant          
             
             if isfield(model, 'surfacesp_removed') && ...
                ~isempty(model.surfacesp_removed) && ...
                iscell(model.surfacesp_removed)
                 surfacesp = model.surfacesp_removed{1};
             else
-                surfacesp = model.surfacesp{1}; % [nFaces x 5], cada linha: [element_number, node1, node2, node3, node4]
+                surfacesp = model.surfacesp{1}; % [nFaces x 5], each row: [element_number, node1, node2, node3, node4]
             end
             
-            % Extração dos vetores de tempo e pressão
+            % Extracting time and pressure vectors
             pressure_at_t = p_app(1);
             step =  length(edata.steps);
             ecoords = edata.steps{1,step}.results.ecoords_prestress;
         
-            % Interpolação linear da pressão
+            % Linear interpolation of pressure
             % pressure_at_t = interp1(time_vec, pressure_vec, time, 'linear', 'extrap');
         
-            % Pré-alocação da matriz de forças
+            % Pre-allocating the force matrix
             nNodes = size(ecoords,1);
             f_boundary = zeros(nNodes,3);
         
-            % Pontos de Gauss e pesos na face quadrilátera
+            % Gauss points and weights on the quadrilateral face
             [gauss_pts, gauss_weights] = get_gauss_points(2,gauss_order); % [ngp x 2], [ngp x 1]
             nGauss = length(gauss_weights);
         
-            % Carregando as faces onde a pressão é aplicada
+            % Loading the faces where pressure is applied
             num_faces = size(surfacesp,1);
         
             for f = 1:num_faces
                 surf_data = surfacesp(f,:);
-                node_ids = surf_data(2:5); % 1-based já!
+                node_ids = surf_data(2:5); % 1-based already!
                 face_coords = ecoords(node_ids, :); % [4 x 3]
  
         
                 for gp = 1:nGauss
-                    xi_eta = gauss_pts(gp,:); % local da face [1 x 2]
+                    xi_eta = gauss_pts(gp,:); % local on the face [1 x 2]
                     [N_face, dN] = evaluateShapeFunctions(xi_eta); % N_face: [4 x 1]
                     dN_dxi = dN{1};
                     dN_deta = dN{2};
 
-                    % Jacobiano da face no ponto de Gauss
+                    % Jacobian of the face at the Gauss point
                     dx_dxi = dN_dxi' * face_coords;   % [1 x 3]
                     dx_deta = dN_deta' * face_coords; % [1 x 3]
         
                     normal_at_gp = (cross(dx_dxi, dx_deta));
             
-                    % Pressão neste ponto
+                    % Pressure at this point
                     p_gp = pressure_at_t;
                     w = gauss_weights(gp);
         
-                    % Acumular força nodal
+                    % Accumulate nodal force
                     for loc_node = 1:4
                         global_node = node_ids(loc_node); % 1-based
                         
-                        % f_gp = shape * pressão * normal * peso
+                        % f_gp = shape * pressure * normal * weight
                         f_gp = N_face(loc_node) * p_gp * normal_at_gp * w;
         
                         f_boundary(global_node,:) = f_boundary(global_node,:) + f_gp;
@@ -182,8 +182,8 @@ classdef ForceCalculation
             last_time_step  = length(times);         % Use last time step (final configuration)
 
             ecoords = edata2.steps{1,last_time_step}.results.ecoords_prestress;      % Node coords at tn
-               
-            % Get gauus point data
+                
+            % Get Gauss point data
             [gauss_points_elem, ~] = get_gauss_points(nDim, gauss_order_hex);
 
             % Retrieve cumulative Fpre from experimental data at final time step
@@ -219,14 +219,14 @@ classdef ForceCalculation
         
                     % Extract deformation gradient and prestrain at this element/Gauss pt
                     if abs(prestress_time) > 1e-6
-                        mFbar = squeeze(F_all(global_idx,gp,:,:));           % from simulation
-                        mFpre = squeeze(F_all_pre(global_idx,gp,:,:));       % from experiment
-                        F     = mFbar * mFpre;                      % total F
+                        mFbar = squeeze(F_all(global_idx,gp,:,:));            % from simulation
+                        mFpre = squeeze(F_all_pre(global_idx,gp,:,:));        % from experiment
+                        F     = mFbar * mFpre;                       % total F
                     else
-                        mFbar = squeeze(F_all(k,gp,:,:));           % from simulation
-                        mFpre = eye(3);                             % from experiment
-                        F     = mFbar * mFpre;                      % total F
-                    end    
+                        mFbar = squeeze(F_all(k,gp,:,:));            % from simulation
+                        mFpre = eye(3);                              % from experiment
+                        F     = mFbar * mFpre;                       % total F
+                    end   
         
                     % Cauchy stress tensor
                     sigma =  computeStress(F, model,matnum, imatprop,ielem,gp);
@@ -287,10 +287,3 @@ function [Ji, detJ] = compute_inv_transpose_jacobian(jacmat)
                        C21, C22, C23; 
                        C31, C32, C33];
 end
-
-
-
-
-
-
-

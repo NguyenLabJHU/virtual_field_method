@@ -1,6 +1,5 @@
 function model = findSharedSurfaceNode2Node(model, mat1, mat2)
 % Find unique mat1-mat2 shared faces and add 1 psurfid and update surfacesp{1,3} with all [Nsurf,7]
-% New: Don't sort face nodes, add a column for the hex_faces row (1-6).
 % Mat1 = Outer surface; Mat2 = Inner surface
 
 elements = model.elements;    % Ne x 9: [elnum n1 n2 n3 n4 n5 n6 n7 n8]

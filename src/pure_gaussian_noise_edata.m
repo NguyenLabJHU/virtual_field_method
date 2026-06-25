@@ -1,16 +1,16 @@
 function edata_noisy = pure_gaussian_noise_edata(edata, model, noise_percent, sigma_additive)
-    % pure_gaussian_noise_checked: Aplica ruído branco gaussiano puro
-    % e verifica o Jacobiano para garantir que nenhum elemento inverta.
+    % pure_gaussian_noise_checked: Applies pure white Gaussian noise
+    % and checks the Jacobian to ensure no elements invert.
     
     edata_noisy = edata;
     nsteps = size(edata.steps, 2);
     coords_ref = edata.steps{1, 1}.results.ecoords;
     [num_nodes, dim] = size(coords_ref);
     
-    % Extrai a conectividade (assumindo elementos C3D8 - 8 nós)
+    % Extract connectivity (assuming hex)
     conn = model.elements(:, 2:9);
 
-    % --- 1. Definindo a Escala Baseada no Deslocamento ---
+    % --- 1. Defining Displacement-Based Scale ---
     all_disps = [];
     for s = 1:nsteps
         all_disps = [all_disps; edata.steps{s}.results.edisp]; 
@@ -18,65 +18,65 @@ function edata_noisy = pure_gaussian_noise_edata(edata, model, noise_percent, si
     max_u = max(abs(all_disps(:)));
     noise_std = (noise_percent/100) * max_u + sigma_additive;
 
-    % --- 2. Injeção de Ruído com Válvula de Segurança ---
-    fprintf('Iniciando injeção de ruído Gaussiano puro com checagem Jacobiana...\n');
+    % --- 2. Noise Injection ---
+    fprintf('Starting pure Gaussian noise injection with Jacobian check...\n');
     for step_idx = 1:nsteps
         ecoords_orig = edata.steps{1, step_idx}.results.ecoords;
         
         success = false;
         attempts = 0;
-        current_scale = 1.0; % Começa com 100% da escala de ruído solicitada
+        current_scale = 1.0; % Starts with 100% of the requested noise scale
 
-        % Tenta até 10 vezes reduzir o ruído caso os elementos invertam
+        % Attempts up to 10 times to reduce noise if elements invert
         while ~success && attempts < 10
-            % Gera ruído branco PURO (independente para cada nó)
+            % Generates PURE white noise (independent for each node)
             noise_raw = (noise_std * current_scale) .* randn(num_nodes, dim);
             
-            % Aplica nas coordenadas (SEM SMOOTH)
+            % Applies to coordinates 
             test_coords = ecoords_orig + noise_raw;
             
-            % --- CHECAGEM DO JACOBIANO ---
+            % --- JACOBIAN CHECK ---
             if check_jacobian(test_coords, conn)
-                % Passou no teste! Aceita as coordenadas e encerra o loop
+                % Passed the test! Accepts coordinates and exits the loop
                 edata_noisy.steps{1, step_idx}.results.ecoords = test_coords;
                 success = true;
             else
-                % Falhou. Aumenta a tentativa e corta o ruído pela metade
+                % Failed.
                 attempts = attempts + 1;
                 current_scale = current_scale * 0.5;
-                fprintf('Aviso (Passo %d): Elemento inverteu. Reduzindo escala de ruído para %.4f\n', step_idx, current_scale);
+                fprintf('Warning (Step %d): Element inverted. Reducing noise scale to %.4f\n', step_idx, current_scale);
             end
         end
         
-        % Se mesmo após 10 tentativas a malha quebrar, mantém o dado original
+        % If the mesh breaks even after 10 attempts, keeps the original data
         if ~success
-            warning('Passo %d: Impossível injetar ruído sem inverter a malha. Mantendo coordenadas originais.', step_idx);
+            warning('Step %d: Impossible to inject noise without inverting the mesh. Keeping original coordinates.', step_idx);
             edata_noisy.steps{1, step_idx}.results.ecoords = ecoords_orig;
         end
     end
 
-    % --- 3. Consistência Cinemática Final ---
-    % Atualiza os deslocamentos (u = x - X) para bater com as coordenadas ruidosas
+    % --- 3. Final Kinematic Consistency ---
+    % Updates displacements (u = x - X) to match the noisy coordinates
     coords1_noisy = edata_noisy.steps{1, 1}.results.ecoords;
     for step_idx = 1:nsteps
         curr_noisy = edata_noisy.steps{1, step_idx}.results.ecoords;
         edata_noisy.steps{1, step_idx}.results.edisp = curr_noisy - coords1_noisy;
     end
     
-    fprintf('Injeção de ruído concluída.\n');
+    fprintf('Noise injection completed.\n');
 end
 
 % =========================================================================
-% FUNÇÃO LOCAL: CHECAGEM DO JACOBIANO
+% LOCAL FUNCTION: JACOBIAN CHECK
 % =========================================================================
-function elementos_ok = check_jacobian(coords, conn)
-    % coords: matriz [nós x 3] com as coordenadas atuais (x, y, z)
-    % conn:   matriz [elementos x 8] com as conectividades da malha
+function elements_ok = check_jacobian(coords, conn)
+    % coords: matrix [nodes x 3] with current coordinates (x, y, z)
+    % conn:   matrix [elements x 8] with mesh connectivities
     
     num_elements = size(conn, 1);
-    elementos_ok = true; 
+    elements_ok = true; 
     
-    % Derivadas das funções de forma no centro do elemento hexaédrico (C3D8)
+    % Shape function derivatives at the center of the hexahedral element (C3D8)
     dN = 0.125 * [
         -1, -1, -1;
          1, -1, -1;
@@ -89,16 +89,16 @@ function elementos_ok = check_jacobian(coords, conn)
     ];
 
     for i = 1:num_elements
-        nos_elemento = conn(i, :);
-        coords_elemento = coords(nos_elemento, :); 
+        node_indices = conn(i, :);
+        element_coords = coords(node_indices, :); 
         
-        % Matriz Jacobiana no centro do elemento
-        J = dN' * coords_elemento;
+        % Jacobian Matrix at the center of the element
+        J = dN' * element_coords;
         
-        % Verifica o determinante
+        % Checks the determinant
         if det(J) <= 0
-            elementos_ok = false;
-            return; % Sai no primeiro erro encontrado para otimizar velocidade
+            elements_ok = false;
+            return; % Exits on the first error found to optimize speed
         end
     end
 end
