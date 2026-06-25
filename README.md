@@ -27,4 +27,6 @@ Prestress Modeling: The identification process explicitly incorporates prestress
 
 Optimization: Utilizes optimization strategies to identify material parameters. The effect of prestress is updated after the solver reaches a local minimum.
 
-Virtual Fields: Implements integration-point-based virtual work pertubation.
+Virtual Fields: Created by perturbing the material parameters.
+
+Simplification: Option to simplify the model removing the unobservable area.
