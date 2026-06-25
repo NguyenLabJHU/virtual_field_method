@@ -60,5 +60,12 @@ function prop = mat_change2prop(mat_type, mat_change)
                 case 'gamma'
                     prop = 6;
             end
+        case {"linear-elastic","linear elastic","le"}
+            switch lower(mat_change)
+                case 'e'
+                    prop = 1;
+                case {'v','nu','poisson'}
+                    prop = 3;
+            end
     end
 end

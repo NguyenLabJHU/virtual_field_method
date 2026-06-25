@@ -28,19 +28,17 @@ path.results = fullfile(path.parent, 'results');
 path.VF = fullfile(path.parent, 'VF');
 
 % FIle names
-mymodel = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions_scleraHGO.feb';      % FE model file
-myexpdata = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions_scleraHGO.log';    % Experimental data file
-matFile = 'Real_data_eye_fiber_choroid_with_pre_cyncl_HGO_4regions_scleraHGO.mat'; % Pre-Saved model data
+mymodel = '';      % FE model file
+myexpdata = '';    % Experimental data file
+matFile = '';      % Pre-Saved model data
 
-%p_app = [0.15,0.02];                       % Reference and applied pressure
 p_app=[-2.0;0.0];
 
 % Last physical time at which prestress is calculated/frozen
 prestress_time = 1.0;
-%prestress_time = 0.0;
+
 
 % Last Time of simulation
-%last_time = 1.5;
 last_time = 2;
 
 % Penalty Factor for the contact
@@ -50,7 +48,7 @@ eps = 1000;
 nMaterial = 11;   
 
 % Percentage of dirty data
-noise_percent = 1;
+noise_percent = 0;
 sigma_additive = 0;
 
 %--------------------------------------------------------------------------
@@ -83,16 +81,12 @@ nvars = numel(lb);  % number of variables
 
 %% ---  How to simplify the model ---
 % Do I want to simplify the model?
-run_simple_model = 'False';
+run_simple_model = 'True';
 
 % Which material we want to remove?
-%rParts = {{'Part1','Part3','Part4','Part5'}};
 rParts = {{'EB36(2)','EB8','EB35(2)','EB7','EB34(1)','EB6','EB34(1)_1','EB34(1)_2','EB6(1)','EB6(2)'}};
-%rParts = {{'EB36(2)','EB8','EB35(2)','EB7','EB34(1)','EB6','EB34(1)_1','EB34(1)_2','EB6(1)','EB6(2)'...
-    %'EB15','EB17','EB36','EB37','EB41','EB42','EB30','EB37(1)'}};
 
 % Which surfaces will be applied the load?
-%mat_surface_traction = {'Mat1_Mat2'};
 mat_surface_traction = {'OCT_Cut'};
 
 %% --- Operations for copying and combining parameters in the parameter matrix ---
@@ -148,10 +142,10 @@ start_points = bsxfun(@plus, lb, bsxfun(@times, lhs_points, (ub - lb)));
 randomized_order = randperm(size(start_points, 1));
 start_points = start_points(randomized_order, :);
 
-%start_points(1,:) = [1,1,1,1,1,1,1,1]; 
+%start_points(1,:) = [1,1,1,1,1,1,1,1]; %Test if it is working on GT
 
 % Prepend custom start point
-totalRunCount = 2; % Starts at 2 to skip calculation of the virtual field
+totalRunCount = 1; % Starts at 2 to skip calculation of the virtual field
 ForwardCount = 1;
 
 %% --- Prepare arrays to hold results ---
@@ -186,8 +180,7 @@ end
 [s_model,s_edata] = simpleModel(model, edata, mat_surface_traction ,rParts);
 
 %% --- Dirty the data for robustness --------------------------------------
-edata = dirty_steps_edata(edata, model, noise_percent, sigma_additive);
-%edata = pure_gaussian_noise_edata(edata, model, noise_percent, sigma_additive);
+edata = pure_gaussian_noise_edata(edata, model, noise_percent, sigma_additive);
 
 %% --- Define the cost function (anonymous wrapper)  ----------------------
 cost_function = @(x) get_cost2regions_calc_Fpre(...

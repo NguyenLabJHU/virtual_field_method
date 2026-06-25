@@ -1,30 +1,112 @@
- function [IVW, EVW, TieVW, cost_func] = calc_virtual_work_variation_integration_simp(path, mymodel, model, ...
-    edata2, matparam, matparam_sweep,ground_truth_mat, p_app, gauss_order,eps,changing_matrix,ops_matrix_struct,full_model,nodal_force)
+function [IVW, EVW, TieVW, cost_func] = calc_virtual_work_variation_integration_simp( ...
+    path, mymodel, model, edata2, matparam, matparam_sweep, ground_truth_mat, ...
+    p_app, gauss_order, eps, changing_matrix, ops_matrix_struct, full_model, nodal_force)
+
 %--------------------------------------------------------------------------
-% calc_virtual_work_variation_integration2
+% calc_virtual_work_variation_integration_simp
 %--------------------------------------------------------------------------
-% Computes the Internal Virtual Work (IVW), External Virtual Work (EVW), and the cost function
-% for a finite element model perturbed with given test material parameters, using Virtual Field Method.
+% Computes:
+%   IVW       = Internal Virtual Work
+%   EVW       = External Virtual Work from pressure/surface loads
+%   TieVW     = Virtual Work contribution from tie-contact penalty forces
+%   nodal_VW  = Virtual Work contribution from prescribed nodal forces
+%   cost_func = normalized residual between internal and external virtual work
+%
+% This function is used inside material-parameter optimization. For each
+% parameter set, it either:
+%   1) runs FEBio to compute the virtual displacement field, or
+%   2) loads cached nodal/element outputs from CSV files.
+%
+% Then it computes the virtual strain field, integrates stress : virtual strain
+% over the volume, computes external virtual work contributions, and accumulates
+% the normalized cost.
 %
 % INPUTS:
-%   path         : string, directory path containing root folder
-%   mymodel      : string, filename of the FEBio finite element model
-%   model        : struct, mesh and element/nodal connectivity (from preliminary_reading2)
-%   edata2       : struct, experimental/nodal data and Fpre from logs (from preliminary_reading2)
-%   matparam     : array [nMaterials x 2], each row is [shear_modulus, bulk_modulus] for a material
-%   p_app        : scalar, applied pressure for virtual work calculations
-%   gauss_order  : integer, quadrature order for hexahedral/surface integration
+%   path
+%       Struct containing folders. Expected fields:
+%           path.data : folder containing FEBio model/data
+%           path.VF   : folder used for Virtual Field cache files
+%
+%   mymodel
+%       FEBio model filename, for example 'model.feb'.
+%
+%   model
+%       Current/reduced model struct. Contains nodes, elements, material IDs,
+%       pressure surfaces, tie-contact information, etc.
+%
+%   edata2
+%       FEBio/experimental result struct from preprocessing. Contains time
+%       steps, nodal coordinates, displacements, deformation gradients,
+%       prestress quantities, and tie-contact integration-point maps.
+%
+%   matparam
+%       Matrix of material parameters indexed by material number.
+%       Example: matparam(matnum,:) gives parameters for material matnum.
+%
+%   matparam_sweep
+%       Material parameter set/sweep passed to FEBio simulation.
+%
+%   ground_truth_mat
+%       Ground-truth/reference material parameters used by simulation routine.
+%
+%   p_app
+%       Applied pressure/load values for each pressure surface.
+%
+%   gauss_order
+%       Quadrature order for volume and surface integration.
+%
+%   eps
+%       Penalty stiffness/parameter used in tie-contact virtual work.
+%
+%   changing_matrix
+%       Matrix defining which material parameters are being varied.
+%       Number of columns = number of parameter sets, nParam.
+%
+%   ops_matrix_struct
+%       Auxiliary structure used by simulate_febio_uniform.
+%
+%   full_model
+%       Full model struct. Used because some arrays, such as F_all_pre and
+%       delta_e, may be indexed according to the full model element ordering.
+%
+%   nodal_force
+%       Nodal force array used for nodal virtual work calculation.
 %
 % OUTPUTS:
-%   IVW          : scalar, calculated internal virtual work for tested parameters
-%   EVW          : scalar, calculated external virtual work for tested parameters
-%   cost_func    : scalar, cost function (squared error between IVW and EVW)
+%   IVW
+%       Internal Virtual Work for the last parameter set evaluated.
 %
-% Uses cached simulation outputs or computes fresh FEA simulation for parameter sets.
-% Integrates over volume and surfaces, computes virtual work, stress and strain at Gauss points.
+%   EVW
+%       Pressure/surface External Virtual Work for the last parameter set.
+%
+%   TieVW
+%       Tie-contact Virtual Work for the last parameter set.
+%
+%   cost_func
+%       Final cost value accumulated over all parameter sets:
+%
+%           sqrt(sum(((IVW - EVW - TieVW - nodal_VW)/EVW_denom)^2))
+%
+% GLOBALS:
+%   totalRunCount
+%       Indicates whether this is the first run. If first run, FEBio is run
+%       and caches are written. Otherwise, cached FEBio outputs are loaded.
+%
+%   ForwardCount
+%       Used to decide whether EVW/TieVW/Nodal caches should be reused.
+%
+%   EVW_vector
+%       Stores individual pressure/surface EVW contributions.
+%
+%   TieVW_vector
+%       Stores individual tie-contact face contributions.
+%
+%   prestress_time
+%       Time defining whether prestress/Fpre should be included.
 %--------------------------------------------------------------------------
 
-global totalRunCount ForwardCount IVW_vector EVW_vector TieVW_vector prestress_time   % Track across parameter sweeps
+global totalRunCount ForwardCount EVW_vector TieVW_vector prestress_time
+
 
 % Kick off parallel pool
 if isempty(gcp('nocreate'))
@@ -39,586 +121,847 @@ if isempty(gcp('nocreate'))
 
 end
 
-%--------------------------------------------------------------------------
-% Mesh and Simulation Geometry Setup
-%--------------------------------------------------------------------------
 
-nel  = length(model.elements);           % Number of volume elements
-nnd  = length(model.nodes);              % Number of nodes
+%% ------------------------------------------------------------------------
+%  Basic mesh and time-step setup
+% -------------------------------------------------------------------------
 
-% Time step array from experimental/FE results
+% Number of volume elements and nodes in the current/reduced model
+nel = length(model.elements);
+nnd = length(model.nodes);
+
+% Time-step information from FEBio/experimental data
 times           = edata2.times;
-first_time_step = 1;                     % Use first time step
-last_time_step  = length(times);         % Use last time step (final configuration)
-prestress_step = find(edata2.times <= prestress_time, 1, 'last'); % find last time less than or equal to target
+first_time_step = 1;              % Reference configuration
+last_time_step  = length(times);  % Final/deformed configuration
 
-% Extract experimental nodal and element results at first and last time steps
-res0   = edata2.steps{1,first_time_step}.results;
-ecoords0 = res0.ecoords;                 % Node coords at t0 (nnd x 3)
-edisp0   = res0.edisp;                   % Node displacements at t0
+% Time step used as the beginning of the elastic/prestress phase
+prestress_step = find(edata2.times <= prestress_time, 1, 'last');
 
-resN   = edata2.steps{1,last_time_step}.results;
-ecoords = resN.ecoords;                  % Node coords at tn
-edisp   = resN.edisp;                    % Node displacements at tn
+% Reference configuration at the first time step
+% ecoords0: nodal coordinates in the reference configuration
+% edisp0  : nodal displacements at reference time
+res0     = edata2.steps{1, first_time_step}.results;
+ecoords0 = res0.ecoords;
+edisp0   = res0.edisp;
 
-resN_1   = edata2.steps{1,last_time_step-1}.results;
-ecoords_1 = resN_1.ecoords;              % Node coords at tn-1
-edisp_1   = resN_1.edisp;                % Node displacements at tn-1
+% Final/deformed configuration
+% ecoords: nodal coordinates at final time
+% edisp  : nodal displacements at final time
+resN    = edata2.steps{1, last_time_step}.results;
+ecoords = resN.ecoords;
+edisp   = resN.edisp;
 
-resN_pre0   = edata2.steps{1,prestress_step}.results;
-ecoords_pre0 = resN_pre0.ecoords;                  % Node coords at the start of elastic
-edisp_pre0   = resN_pre0.edisp;                   % Node displacements at the start of elastic
+% Previous time step, used mainly for tie-contact/contact calculations
+resN_1    = edata2.steps{1, last_time_step - 1}.results;
+ecoords_1 = resN_1.ecoords;
+edisp_1   = resN_1.edisp;
 
-resN_pre   = edata2.steps{1,last_time_step}.results;
-ecoords_pre = resN_pre.ecoords_prestress;                  % Node coords at the end of elastic
-edisp_pre   = resN_pre.edisp_prestress;                   % Node displacements the end of elastic
+% Configuration at the beginning of the elastic/prestress phase
+resN_pre0    = edata2.steps{1, prestress_step}.results;
+ecoords_pre0 = resN_pre0.ecoords;
+edisp_pre0   = resN_pre0.edisp;
 
-% Starting empty struct
-delta_e_struct = struct(); 
-gauss_order_hex = gauss_order;           % Gauss order for the hex elements
+% Prestress-related configuration at the final time
+% ecoords_pre: coordinates after applying prestress
+% edisp_pre  : prestress displacement used as reference for virtual field
+resN_pre    = edata2.steps{1, last_time_step}.results;
+ecoords_pre = resN_pre.ecoords_prestress;
+edisp_pre   = resN_pre.edisp_prestress;
 
-% Name of the cache file to store delta_e_struct
-modelName = erase(mymodel, '.feb');      % Remove the extension from .feb 
-cachefile_delta_e = ['delta_e_struct_', modelName, '.mat'];
-fulldelta_e_File = fullfile(path.VF, cachefile_delta_e);
+% Gauss order used for hexahedral volume integration
+gauss_order_hex = gauss_order;
 
-% Deformation gradients for reference configuration
-[F_all, ~] = compute_deformation_gradient(model, ecoords0, edisp, gauss_order_hex);
+% Model name without .feb extension, used for cache filenames
+modelName = erase(mymodel, '.feb');
 
-% Retrieve cumulative Fpre from experimental data at final time step
-if prestress_time>10^-6
-   F_all_pre = edata2.steps{1,last_time_step}.results.eFpre_calc; % shape: [nel x nGauss x 3 x 3]
-end
 
-%--------------------------------------------------------------------------
-% Simulation or Cache: Compute or Load Perturbed Results
-%--------------------------------------------------------------------------
+%% ------------------------------------------------------------------------
+%  Cache file paths
+% -------------------------------------------------------------------------
 
-nParam = size(changing_matrix,2);        % Number of material parameter sets in sweep
-cost_func = 0;                           % Initialize cost function accumulator
-
-% Allocate storage for simulated nodal and element data across param sets
-nodedat_out = zeros(nnd, 7*nParam);      % (node, [index,x,y,z,ux,uy,uz])
-elemdat_out = zeros(nel, 19*nParam);     % (element, [index,...Fbar(9)...Fpre(9)...])
-
-% Construct the full paths using the VF directory
+% Cache files for FEBio virtual-field outputs.
+% nodedat cache contains nodal output for all parameter sets.
+% elemdat cache contains element output for all parameter sets.
 nodeCachePath = fullfile(path.VF, ['nodedat_cached_', modelName, '.csv']);
 elemCachePath = fullfile(path.VF, ['elemdat_cached_', modelName, '.csv']);
 
-% Checking if there is need to calculate the VF
-if totalRunCount == 1
-    % First run for sweep: Perform FE simulation for each material property set
-    NewVirtualWorkFlag = 1;
+% Cache files for virtual work contributions.
+% energyFile stores pressure/surface EVW.
+% tieFile stores tie-contact virtual work.
+% nodalFile stores nodal-force virtual work.
+energyFile = fullfile(path.VF, ['EVW_cached_simp_', modelName, '.csv']);
+tieFile    = fullfile(path.VF, ['TieVW_cached_simp_', modelName, '.csv']);
+nodalFile  = fullfile(path.VF, ['Nodal_VW_cached_simp_', modelName, '.csv']);
+
+% Original EVW cache, used as cost-function normalization denominator
+% when available.
+EVW_original_file = fullfile(path.VF, ['EVW_cached_', modelName, '.csv']);
+
+% Cache file for virtual strain tensor delta_e for each parameter set.
+% Stored as:
+%   delta_e_struct.param_1
+%   delta_e_struct.param_2
+%   ...
+cachefile_delta_e = ['delta_e_struct_', modelName, '.mat'];
+fulldelta_e_File  = fullfile(path.VF, cachefile_delta_e);
+
+
+%% ------------------------------------------------------------------------
+%  Precompute deformation gradient and full-model element map
+% -------------------------------------------------------------------------
+
+% F_all contains deformation gradient Fbar for the current/reduced model.
+% Expected size:
+%   [nel x nGauss x 3 x 3]
+[F_all, ~] = compute_deformation_gradient(model, ecoords0, edisp, gauss_order_hex);
+
+% F_all_pre contains the prestress/predeformation gradient from the full model.
+% It is only used if prestress_time is nonzero.
+% This array may be indexed using full_model element ordering.
+if abs(prestress_time) > 1e-6
+    F_all_pre = edata2.steps{1, last_time_step}.results.eFpre_calc;
 else
-    % For subsequent runs, load matrix results from CSV cache for efficiency
-    tic
-    nodedat_cached = readmatrix(nodeCachePath);
-    elemdat_cached = readmatrix(elemCachePath);
-    time4 = toc;
-    fprintf('reading nodedat_cached took %.4f s\n', time4);
-    NewVirtualWorkFlag = 2;
+    F_all_pre = [];
+end
+
+% Map each element in model.elements to its row in full_model.elements.
+% For current/reduced model element k:
+%
+%   kk_full = map_to_full(k)
+%
+% gives the corresponding row index in full_model.
+% This is needed because arrays such as F_all_pre and delta_e may follow
+% full_model ordering.
+[~, map_to_full] = ismember(model.elements(:, 1), full_model.elements(:, 1));
+
+if any(map_to_full == 0)
+    error('Some model.elements were not found in full_model.elements');
 end
 
 
-%--------------------------------------------------------------------------
-% Parameter Sweep Loop: For Each Material Parameter Set
-%--------------------------------------------------------------------------
+%% ------------------------------------------------------------------------
+%  Parameter and output initialization
+% -------------------------------------------------------------------------
+
+% Number of material-parameter sets to evaluate
+nParam = size(changing_matrix, 2);
+
+% Accumulated cost over all parameter sets
+cost_func = 0;
+
+% Output arrays for caching FEBio virtual-field data.
+% nodedat has 7 columns per parameter set:
+%   [node_id, x, y, z, ux, uy, uz]
+%
+% elemdat has 19 columns per parameter set:
+%   [element_id, ... deformation/prestress quantities ...]
+nodedat_out = zeros(nnd, 7  * nParam);
+elemdat_out = zeros(nel, 19 * nParam);
+
+% Output arrays for caching scalar virtual work values for each parameter set
+EVW_out      = zeros(nParam, 1);
+TieVW_out    = zeros(nParam, 1);
+nodal_VW_out = zeros(nParam, 1);
+
+% Initialize outputs in case the function exits early
+IVW   = 0;
+EVW   = 0;
+TieVW = 0;
+
+
+%% ------------------------------------------------------------------------
+%  Load or compute FEBio virtual-field simulation data
+% -------------------------------------------------------------------------
+
+if totalRunCount == 1
+
+    % First run: run FEBio simulations and later write cache files
+    NewVirtualWorkFlag = 1;
+
+else
+
+    % Later runs: load previously computed FEBio outputs from cache
+    tic
+    nodedat_cached = readmatrix(nodeCachePath);
+    elemdat_cached = readmatrix(elemCachePath);
+    fprintf('reading nodedat_cached/elemdat_cached took %.4f s\n', toc);
+
+    NewVirtualWorkFlag = 2;
+
+end
+
+
+%% ------------------------------------------------------------------------
+%  Load EVW/TieVW/Nodal caches if available
+% -------------------------------------------------------------------------
+
+% Cache flags. If ForwardCount == 1, force recomputation/overwrite.
+hasEnergyCache = isfile(energyFile) && ForwardCount ~= 1;
+hasTieCache    = isfile(tieFile)    && ForwardCount ~= 1;
+hasNodalCache  = isfile(nodalFile)  && ForwardCount ~= 1;
+
+if hasEnergyCache
+    EVW_out = readmatrix(energyFile);
+end
+
+if hasTieCache
+    TieVW_out = readmatrix(tieFile);
+end
+
+if hasNodalCache
+    nodal_VW_out = readmatrix(nodalFile);
+end
+
+% Original EVW used as denominator in the cost function if available
+if isfile(EVW_original_file)
+    EVW_original = readmatrix(EVW_original_file);
+    hasEVWOriginal = true;
+else
+    EVW_original = [];
+    hasEVWOriginal = false;
+end
+
+
+%% ------------------------------------------------------------------------
+%  Gauss points
+% -------------------------------------------------------------------------
+
+% Volume integration: 3D hexahedral elements
+dimension_hex = 3;
+[gauss_points_elem, weights_elem] = get_gauss_points(dimension_hex, gauss_order_hex);
+
+% Surface integration: 2D quadrilateral faces
+gauss_order_surface = gauss_order;
+dimension_surface   = 2;
+[gauss_points_surf, weights_surf] = get_gauss_points(dimension_surface, gauss_order_surface);
+
+
+%% ------------------------------------------------------------------------
+%  Parameter sweep
+% -------------------------------------------------------------------------
 
 for param_ind = 1:nParam
-    % --- FEA Simulation or Load Cached Results ---
+
+    fprintf('\n--- Parameter %d/%d ---\n', param_ind, nParam);
+
+
+    %% --------------------------------------------------------------------
+    %  Load or simulate virtual displacement field
+    % ---------------------------------------------------------------------
+
     if NewVirtualWorkFlag == 1
-        % Run FEA simulation and store results for this parameter set
+
+        % First run: run FEBio for this parameter set
         mydir = path.data;
+
         tic
-        
-        [nodedat, elemdat] = simulate_febio_uniform(mydir, mymodel, ...
-            matparam_sweep,ground_truth_mat ,nnd, nel, param_ind,...
-            changing_matrix,ops_matrix_struct,model);
+        [nodedat, elemdat] = simulate_febio_uniform( ...
+            mydir, mymodel, matparam_sweep, ground_truth_mat, nnd, nel, ...
+            param_ind, changing_matrix, ops_matrix_struct, model);
+        fprintf('simulate_febio_uniform took %.4f s\n', toc);
 
-        time3 = toc;
-        fprintf('simulate_febio_uniform took %.4f s\n', time3);
+        % Virtual displacement = simulated displacement - prestress reference
+        nodedat(:, 5:7) = nodedat(:, 5:7) - edisp_pre;
 
-        % Save to cache array for this param variation
-        nodedat(:,5:7) = nodedat(:,5:7)-edisp_pre; % Virtual displacement = simulated - reference
-        nodedat_out(:,(param_ind-1)*7+1:(param_ind-1)*7+7)    = nodedat;
-        elemdat_out(:,(param_ind-1)*19+1:(param_ind-1)*19+19) = elemdat;
+        % Store this parameter set in output cache arrays
+        nodedat_out(:, (param_ind - 1) * 7  + 1 : param_ind * 7)  = nodedat;
+        elemdat_out(:, (param_ind - 1) * 19 + 1 : param_ind * 19) = elemdat;
+
     else
-        % Load previously cached nodal/element matrix for this param set
-        nodedat  = nodedat_cached(:,(param_ind-1)*7+1:(param_ind-1)*7+7);
-        elemdat  = elemdat_cached(:,(param_ind-1)*19+1:(param_ind-1)*19+19);    
+
+        % Later runs: extract this parameter set from cached matrices
+        nodedat = nodedat_cached(:, (param_ind - 1) * 7  + 1 : param_ind * 7);
+        elemdat = elemdat_cached(:, (param_ind - 1) * 19 + 1 : param_ind * 19);
+
     end
 
-    % Simulation/data failure check: If any results contain NaN, abort this run
+
+    %% --------------------------------------------------------------------
+    %  NaN check
+    % ---------------------------------------------------------------------
+
+    % If FEBio failed or output is corrupted, abort this objective evaluation
     if any(isnan(nodedat(:))) || any(isnan(elemdat(:)))
-        IVW = NaN;
-        EVW = NaN;
+        IVW       = NaN;
+        EVW       = NaN;
+        TieVW     = NaN;
         cost_func = NaN;
         return;
     end
 
+
+    %% --------------------------------------------------------------------
+    %  Virtual displacement and virtual strain
+    % ---------------------------------------------------------------------
+
     tic
 
-    %--------------------------------------------------------------------------
-    % Compute Virtual Field: Compare simulation and experiment displacements
-    %--------------------------------------------------------------------------
-    delu   = nodedat(:,5:7);                  % Virtual displacement = simulated - reference
-       
-    % Fieldname for this parameter index
+    % Virtual displacement field at nodes
+    % nodedat columns 5:7 are ux, uy, uz after subtracting edisp_pre
+    delu = nodedat(:, 5:7);
+
+    % Field name used inside delta_e_struct cache
     fieldname = sprintf('param_%d', param_ind);
-    
-    % Flag to decide whether to compute or just load
+
     need_to_compute = false;
-    
+    delta_e_struct  = struct();
+
+    % Load virtual strain tensor delta_e from cache if available.
+    % Otherwise compute it and save it.
     if exist(fulldelta_e_File, 'file')
-        S = load(fulldelta_e_File);                % load struct from file
+
+        S = load(fulldelta_e_File);
+
         if isfield(S, 'delta_e_struct') && isfield(S.delta_e_struct, fieldname)
-            % field exists: just read from cache
+
+            % Virtual strain tensor for this parameter set
+            % Expected size:
+            %   [nElem_full_or_model x nGauss x 3 x 3]
             delta_e = S.delta_e_struct.(fieldname);
-            
+
         else
+
             need_to_compute = true;
+
             if isfield(S, 'delta_e_struct')
-                delta_e_struct = S.delta_e_struct;  % retain rest of struct to not lose other fields
+                delta_e_struct = S.delta_e_struct;
             else
                 delta_e_struct = struct();
             end
+
         end
+
     else
+
         need_to_compute = true;
-        delta_e_struct = struct();          % start new if file doesn't exist
+        delta_e_struct  = struct();
+
     end
-    
+
     if need_to_compute
-        % Compute virtual strain field at Gauss points for all elements
-        [delta_e, ~] = compute_virtual_strain_integration(model, ecoords, delu, gauss_order_hex);
+
+        % Compute virtual strain field at Gauss points
+        [delta_e, ~] = compute_virtual_strain_integration( ...
+            model, ecoords, delu, gauss_order_hex);
+
         fprintf('Computed new delta_e for %s\n', fieldname);
-    
-        % Add the result to the struct
+
+        % Save/update delta_e cache
         delta_e_struct.(fieldname) = delta_e;
-    
-        % Save/overwrite .mat file (matlab will update or create)
         save(fulldelta_e_File, 'delta_e_struct');
+
     end
 
-    % Identity matrix used in stress and strain tensor calculations
-    Id = eye(3);
 
-    %--------------------------------------------------------------------------
-    % --- Load Energy Virtual Work (EVW) cache from the VF folder ---
-    %--------------------------------------------------------------------------
-    
-    % Construct the full paths to the files inside the VF subfolder
-    energyFile = fullfile(path.VF, ['EVW_cached_simp_', modelName, '.csv']);
-    tieFile    = fullfile(path.VF, ['TieVW_cached_simp_', modelName, '.csv']);
-    nodalFile    = fullfile(path.VF, ['Nodal_VW_cached_simp_', modelName, '.csv']);
+    %% --------------------------------------------------------------------
+    %  Internal Virtual Work
+    % ---------------------------------------------------------------------
+    % IVW = integral_over_volume sigma : delta_e dV
+    %
+    % element_IVW_array stores each element contribution. The sum after the
+    % parfor gives total IVW.
 
-    % Check if the cache file for the EVW exists before attempting to read
-    if isfile(energyFile)
-        EVW_out = readmatrix(energyFile);  
-    end
+    element_IVW_array = zeros(nel, 1);
 
-    % Check if the cache file for the TieEVW exists before attempting to read
-    if isfile(tieFile) && ForwardCount ~= 1
-         TieVW_out = readmatrix(tieFile);
-    end
-
-    % Check if the cache file for the SimpEVW exists before attempting to read
-    if isfile(nodalFile) && ForwardCount ~= 1
-         nodal_VW_out = readmatrix(nodalFile);
-    end
-    
-
-    %% ----------------- Internal Virtual Work Calculation -----------------
-    IVW = 0;                           % Accumulator for Internal Virtual Work   
-    dimension_hex = 3;                 % 3D brick/hexahedral element
-
-    element_IVW_array      = zeros(nel,1);  % Array to store the IVW for the parfor
-
-    [gauss_points_elem, weights_elem] = get_gauss_points(dimension_hex, gauss_order_hex);
-
-    [~, map_to_full] = ismember(model.elements(:,1), full_model.elements(:,1));
-
-    % ---- Loop over all volumetric elements ----
     parfor k = 1:nel
 
-        ielem = model.elements(k,1);
-        imatprop = zeros(size(model.matprop,2),1); 
-        element_vf_norm_sq = 0;        % Virtual strain norm squared per element
-        
-        % Assemble each element's 8 node coordinates
-        X = zeros(8,3);
-        for node_idx = 1:8
-            X(node_idx,:) = ecoords(model.elements(k, node_idx+1), :);
-        end
+        % Element ID in current/reduced model
+        ielem = model.elements(k, 1);
 
-        % Material assignment for element
+        % Material number assigned to this element
         matnum = model.elemmat(k);
-        imatprop(:) = matparam(matnum,:);
 
-        element_IVW = 0;
-        element_Vol = 0;
+        % Corresponding row in full_model. Needed for arrays indexed by
+        % full_model ordering, such as F_all_pre and delta_e.
+        kk_full = map_to_full(k);
 
-        % ---- Loop over all Gauss points ----
+        % Material parameters for this element/material
+        imatprop = zeros(size(model.matprop, 2), 1);
+        imatprop(:) = matparam(matnum, :);
+
+        % Coordinates of the 8 nodes of the hexahedral element
+        X = ecoords(model.elements(k, 2:9), :);
+
+        % Element-level accumulators
+        element_IVW        = 0;
+        element_Vol        = 0;
+        element_vf_norm_sq = 0;
+
+        % Loop over Gauss points in the hexahedral element
         for gp = 1:size(gauss_points_elem, 1)
-            xi    = gauss_points_elem(gp, 1);
-            eta   = gauss_points_elem(gp, 2);
-            zeta  = gauss_points_elem(gp, 3);
-            weight= weights_elem(gp);
 
-            % Hex shape function derivatives
-            dN_dxi = 0.125 * [-(1-eta)*(1-zeta);  (1-eta)*(1-zeta); ...
-                              (1+eta)*(1-zeta); -(1+eta)*(1-zeta); ...
-                              -(1-eta)*(1+zeta);  (1-eta)*(1+zeta); ...
-                              (1+eta)*(1+zeta); -(1+eta)*(1+zeta)];
-            dN_deta = 0.125 * [-(1-xi)*(1-zeta); -(1+xi)*(1-zeta); ...
-                               (1+xi)*(1-zeta);  (1-xi)*(1-zeta); ...
-                               -(1-xi)*(1+zeta); -(1+xi)*(1+zeta); ...
-                               (1+xi)*(1+zeta);  (1-xi)*(1+zeta)];
-            dN_dzeta = 0.125 * [-(1-xi)*(1-eta); -(1+xi)*(1-eta); ...
-                                -(1+xi)*(1+eta); -(1-xi)*(1+eta); ...
-                                (1-xi)*(1-eta);  (1+xi)*(1-eta); ...
-                                (1+xi)*(1+eta);  (1-xi)*(1+eta)];
+            xi     = gauss_points_elem(gp, 1);
+            eta    = gauss_points_elem(gp, 2);
+            zeta   = gauss_points_elem(gp, 3);
+            weight = weights_elem(gp);
 
-            dX_dxi   = dN_dxi'  * X;
-            dX_deta  = dN_deta' * X;
+            % Hexahedral shape function derivatives with respect to
+            % natural coordinates xi, eta, zeta.
+            dN_dxi = 0.125 * [ ...
+                -(1 - eta) * (1 - zeta);
+                 (1 - eta) * (1 - zeta);
+                 (1 + eta) * (1 - zeta);
+                -(1 + eta) * (1 - zeta);
+                -(1 - eta) * (1 + zeta);
+                 (1 - eta) * (1 + zeta);
+                 (1 + eta) * (1 + zeta);
+                -(1 + eta) * (1 + zeta)];
+
+            dN_deta = 0.125 * [ ...
+                -(1 - xi) * (1 - zeta);
+                -(1 + xi) * (1 - zeta);
+                 (1 + xi) * (1 - zeta);
+                 (1 - xi) * (1 - zeta);
+                -(1 - xi) * (1 + zeta);
+                -(1 + xi) * (1 + zeta);
+                 (1 + xi) * (1 + zeta);
+                 (1 - xi) * (1 + zeta)];
+
+            dN_dzeta = 0.125 * [ ...
+                -(1 - xi) * (1 - eta);
+                -(1 + xi) * (1 - eta);
+                -(1 + xi) * (1 + eta);
+                -(1 - xi) * (1 + eta);
+                 (1 - xi) * (1 - eta);
+                 (1 + xi) * (1 - eta);
+                 (1 + xi) * (1 + eta);
+                 (1 - xi) * (1 + eta)];
+
+            % Jacobian matrix from natural to physical coordinates
+            dX_dxi   = dN_dxi'   * X;
+            dX_deta  = dN_deta'  * X;
             dX_dzeta = dN_dzeta' * X;
-            Jac_matrix = [dX_dxi; dX_deta; dX_dzeta];   % 3x3 Jacobian
+
+            Jac_matrix = [dX_dxi; dX_deta; dX_dzeta];
 
             jac_det      = det(Jac_matrix);
             jac_weighted = jac_det * weight;
 
-            logical_mask = map_to_full(k);
-            
+            % Elastic/mechanical deformation gradient from current model
+            mFbar = squeeze(F_all(k, gp, :, :));
 
-            % Extract deformation gradient and prestrain at this element/Gauss pt
+            % Prestress/predeformation gradient from full model, if used
             if abs(prestress_time) > 1e-6
-                mFbar = squeeze(F_all(k,gp,:,:));                   % from simulation
-                mFpre = squeeze(F_all_pre(logical_mask,gp,:,:));       % from experiment
-                F     = mFbar * mFpre;                              % total F
+                mFpre = squeeze(F_all_pre(kk_full, gp, :, :));
             else
-                mFbar = squeeze(F_all(k,gp,:,:));           % from simulation
-                mFpre = eye(3);                             % from experiment
-                F     = mFbar * mFpre;                      % total F
-            end    
-            dgum  = squeeze(delta_e(logical_mask,gp,:,:));         % Virtual strain tensor
+                mFpre = eye(3);
+            end
 
-            % Cauchy stress tensor
-            sigma =  computeStress(F, model,matnum, imatprop,ielem,gp);
+            % Total deformation gradient
+            F = mFbar * mFpre;
 
-            % Compute virtual work (trace of sigma*delta_e)
-            temp = sum(sum(dgum .* sigma)); 
+            % Virtual strain tensor at this element/Gauss point.
+            % Indexed using full-model ordering.
+            dgum = squeeze(delta_e(kk_full, gp, :, :));
 
-            % Accumulate IVW and volume for this Gauss point
-            element_IVW = element_IVW + temp * jac_weighted;   
+            % Cauchy stress tensor at this Gauss point
+            sigma = computeStress(F, model, matnum, imatprop, ielem, gp);
+
+            % sigma : delta_e = sum_ij sigma_ij * delta_e_ij
+            temp = sum(sum(dgum .* sigma));
+
+            % Add weighted Gauss-point contribution to element IVW
+            element_IVW = element_IVW + temp * jac_weighted;
+
+            % Element volume accumulator, kept for possible future use
             element_Vol = element_Vol + jac_weighted;
 
-            % Accumulate norm squared of virtual strain for normalization (if desired)
-            vf_q = sum(sum(dgum .* dgum));      % Frobenius norm
+            % Virtual strain norm accumulator, kept for possible future use
+            vf_q = sum(sum(dgum .* dgum));
             element_vf_norm_sq = element_vf_norm_sq + vf_q * jac_weighted;
+
         end
 
-        element_IVW_array(k) = element_IVW; % Add element's IVW to the vector
-        IVW_vector(k, param_ind) = element_IVW;
+        % Store element contribution. Sum is done after parfor.
+        element_IVW_array(k) = element_IVW;
+
     end
 
-    % Getting the total value after parfor
+    % Total internal virtual work
     IVW = sum(element_IVW_array);
 
-    %% ----------------- External Virtual Work Calculation (Surface) -----------------
-    if isfile(energyFile) && ForwardCount ~= 1
-        
+
+    %% --------------------------------------------------------------------
+    %  External Virtual Work - pressure/surface contribution
+    % ---------------------------------------------------------------------
+    % EVW = integral_over_loaded_surface p * delta_u dot n dA
+
+    if hasEnergyCache
+
+        % Load pressure/surface EVW from cache
         EVW = EVW_out(param_ind);
 
-    else    
-        
-        EVW = 0;                                   % External Virtual Work accumulator
-        AreaS = 0;                                 % Surface area accumulator
-    
-        gauss_order_surface  = gauss_order;        % Surface quadrature order
-        dimension_surface    = 2;                  % Quads are 2D surfaces
-    
-        [gauss_points_surf, weights_surf] = get_gauss_points(dimension_surface, gauss_order_surface);
-    
-        % Number of applied loads
+    else
+
+        EVW   = 0;
+        AreaS = 0;
+
+        % Number of pressure/load surfaces
         nLoad = length(p_app);
-    
+
         for nLoad_idx = 1:nLoad
-            nels = length(model.surfacesp{1,nLoad_idx});          % Number of surface elements 
-    
-            for k = 1:nels
-                % Extract coords for each node of the surface element
-                X = zeros(4,3);
-                for node_idx = 1:4
-                    X(node_idx,:) = ecoords(model.surfacesp{1,nLoad_idx}(k,node_idx+1), :);
-                end
-        
-                % Extract virtual displacement at surface nodes
-                delu_nodes = zeros(4,3);
-                for node_idx = 1:4
-                    node_id = model.surfacesp{1,nLoad_idx}(k, node_idx+1);
-                    delu_nodes(node_idx,:) = delu(node_id,:);
-                end
-        
-                surface_EVW   = 0;
-                surface_Area  = 0;
-        
-                % Loop over surface Gauss points
-                for gp = 1:size(gauss_points_surf, 1)
-                    xi     = gauss_points_surf(gp,1);
-                    eta    = gauss_points_surf(gp,2);
-                    weight = weights_surf(gp);
-        
-                    N = 0.25 * [(1-xi)*(1-eta);
-                                (1+xi)*(1-eta);
-                                (1+xi)*(1+eta);
-                                (1-xi)*(1+eta)];
-                    dN_dxi  = 0.25 * [-(1-eta);  (1-eta);  (1+eta); -(1+eta)];
-                    dN_deta = 0.25 * [-(1-xi); -(1+xi);  (1+xi);  (1-xi)];
-        
-                    dX_dxi   = dN_dxi' * X;
-                    dX_deta  = dN_deta' * X;
-                    area_vec = cross(dX_dxi, dX_deta);
-                    jac_surf     = norm(area_vec);     % Surface Jacobian
-                    jac_weighted = jac_surf * weight;
-        
-                    normal = area_vec / jac_surf;      % Outward unit normal
-        
-                    delum = N' * delu_nodes;           % Interpolated virtual displacement at Gauss pt
-        
-                    surface_EVW  = surface_EVW + p_app(nLoad_idx) * dot(delum, normal) * jac_weighted;
-                    surface_Area = surface_Area + jac_weighted;
-                end
-            
-                EVW = EVW + surface_EVW;               % Add surface element EVW
-                EVW_vector(nLoad_idx,k, param_ind) = surface_EVW;
-                AreaS = AreaS + surface_Area;
-            end   
-        end
-        EVW_out(param_ind) = EVW;
-    end
 
-    %% ----------------- External Virtual Work Calculation (Tie-Contact) -----------------
-    if isfile(tieFile) && ForwardCount ~= 1
-        
-        TieVW = TieVW_out(param_ind);
+            % Number of surface elements for this load
+            nels_surface = length(model.surfacesp{1, nLoad_idx});
 
-    else 
-        
-        TieVW = 0;                 % Virtual work accumulator
-        TieArea = 0;               % Contact area accumulator
-        test=1;
-        diff_matrix = [];      % Initialize empty double array
-        gap_info = [];
-    
-    
-        % Only run the calculation in case of existence of a tie-contact
-        if isfield(model, 'tie_contact') && ~isempty(model.tie_contact)
-            % --- Tie Contact Virtual Work Calculation ---        
-            nfaces = size(model.tie_contact.primary_nodes, 1);
-            
-            for iface = 1:nfaces
-                ip_map0 = edata2.all_ip_map{1,1}{iface,1}; % getting the info at the first time step
-                primary_face_nodes = model.tie_contact.primary_nodes(iface,:);
-        
-                surface_TieVW = 0;
+            for ksurf = 1:nels_surface
+
+                % Coordinates and virtual displacements of the 4 surface nodes
+                X = zeros(4, 3);
+                delu_nodes = zeros(4, 3);
+
+                for node_idx = 1:4
+                    node_id = model.surfacesp{1, nLoad_idx}(ksurf, node_idx + 1);
+
+                    X(node_idx, :)          = ecoords(node_id, :);
+                    delu_nodes(node_idx, :) = delu(node_id, :);
+                end
+
+                surface_EVW  = 0;
                 surface_Area = 0;
-            
-                % Get node coords & virtual disp for the quad's nodes
-                X_face = zeros(4,3);
-                delu_nodes_prim = zeros(4,3);
-                for k = 1:4
-                    idx = find(model.nodes(:,1)==primary_face_nodes(k+1));
-                    %X_face_current(k,:) = ecoords(idx,1:3);
-                    X_face_current(k,:) = ecoords_pre(idx,1:3);
-                    X_face_1(k,:) = ecoords_1(idx,1:3);
-                    X_face_ref(k,:)     = ecoords0(idx,1:3);
-                    delu_nodes_prim(k,:) = delu(primary_face_nodes(k+1),:);
-                end
-            
-                for ip = 1:length(ip_map0)
-                    % Integration point parametric coords (xi, eta)
-                    xi     = ip_map0(ip).prim_rs(1);
-                    eta    = ip_map0(ip).prim_rs(2);
-            
-                    % Shape functions at (xi, eta)
-                    Np = 0.25 * [ (1-xi)*(1-eta);
-                                 (1+xi)*(1-eta);
-                                 (1+xi)*(1+eta);
-                                 (1-xi)*(1+eta) ];
-            
-                    % Primary integration point positions
-                    prim_xyz_ref = Np' * X_face_ref;
-                    prim_xyz_current = Np' * X_face_1;
-                    prim_xyz_current2 = Np' * X_face_current;
-    
-                    % Virtual displacement @ Gauss point, primary
-                    delu_prim_gp = Np' * delu_nodes_prim;  % column vector
-            
-                    % Secondary: get connectivity and nodal virtual disp
-                    sec_elem_id = ip_map0(ip).sec_elem_id;
-                    sec_elem_nodes = ip_map0(ip).sec_face;
-                    delu_nodes_sec = zeros(4,3);
-                    X_sec_1 = zeros(4,3);
-                    X_sec_ref = zeros(4,3);
-                    for k2 = 1:4
-                        idx2 = find(model.nodes(:,1)==sec_elem_nodes(k2));
-                        delu_nodes_sec(k2,:) = delu(sec_elem_nodes(k2),:);
-                        X_sec_1(k2,:) = ecoords_1(idx2,1:3);
-                        %X_sec_current(k2,:) = ecoords(idx2,1:3);
-                        X_sec_current(k2,:) = ecoords_pre(idx2,1:3);
-                        X_sec_ref(k2,:) = ecoords0(idx2,1:3);
-                    end
-            
-                    % Mapped secondary IP parametric coords (xi, eta)
-                    xi_sec  = ip_map0(ip).sec_rs(1);
-                    eta_sec = ip_map0(ip).sec_rs(2);
-            
-                    N_sec = 0.25 * [(1-xi_sec)*(1-eta_sec);
-                                    (1+xi_sec)*(1-eta_sec);
-                                    (1+xi_sec)*(1+eta_sec);
-                                    (1-xi_sec)*(1+eta_sec)];
-    
 
-                    % Secondary integration point positions
-                    sec_xyz_ref     = N_sec' * X_sec_ref;
-                    sec_xyz_current = N_sec' * X_sec_1;
-                    sec_xyz_current2 = N_sec' * X_sec_current;
-                    delu_sec_gp = N_sec' * delu_nodes_sec;
-            
-                    % Virtual gap
-                    delta_g = delu_prim_gp - delu_sec_gp;
-                    
-            
-                    % Surface Jacobian calculation primary surface (use shape function derivatives at xi, eta)
-                    dN_dxi = 0.25 * [-(1-eta); (1-eta); (1+eta); -(1+eta)];
-                    dN_deta = 0.25 * [-(1-xi); -(1+xi); (1+xi); (1-xi)];
-                    dX_dxi  = dN_dxi' * X_face_current;
-                    dX_deta = dN_deta' * X_face_current;
+                % Surface Gauss integration
+                for gp = 1:size(gauss_points_surf, 1)
+
+                    xi     = gauss_points_surf(gp, 1);
+                    eta    = gauss_points_surf(gp, 2);
+                    weight = weights_surf(gp);
+
+                    % Bilinear quad shape functions
+                    N = 0.25 * [ ...
+                        (1 - xi) * (1 - eta);
+                        (1 + xi) * (1 - eta);
+                        (1 + xi) * (1 + eta);
+                        (1 - xi) * (1 + eta)];
+
+                    dN_dxi = 0.25 * [ ...
+                        -(1 - eta);
+                         (1 - eta);
+                         (1 + eta);
+                        -(1 + eta)];
+
+                    dN_deta = 0.25 * [ ...
+                        -(1 - xi);
+                        -(1 + xi);
+                         (1 + xi);
+                         (1 - xi)];
+
+                    % Surface Jacobian and normal
+                    dX_dxi  = dN_dxi'  * X;
+                    dX_deta = dN_deta' * X;
+
                     area_vec = cross(dX_dxi, dX_deta);
                     jac_surf = norm(area_vec);
-            
-                    % Quadrature weight
+
+                    jac_weighted = jac_surf * weight;
+                    normal       = area_vec / jac_surf;
+
+                    % Interpolated virtual displacement at this surface GP
+                    delum = N' * delu_nodes;
+
+                    % Pressure work contribution
+                    surface_EVW = surface_EVW + ...
+                        p_app(nLoad_idx) * dot(delum, normal) * jac_weighted;
+
+                    surface_Area = surface_Area + jac_weighted;
+
+                end
+
+                EVW = EVW + surface_EVW;
+
+                % Store per-surface-element contribution in global vector
+                EVW_vector(nLoad_idx, ksurf, param_ind) = surface_EVW;
+
+                AreaS = AreaS + surface_Area;
+
+            end
+
+        end
+
+        EVW_out(param_ind) = EVW;
+
+    end
+
+
+    %% --------------------------------------------------------------------
+    %  Tie-contact Virtual Work
+    % ---------------------------------------------------------------------
+    % TieVW is computed using tie-contact integration point maps and penalty
+    % forces based on the contact gap difference.
+
+    if hasTieCache
+
+        TieVW = TieVW_out(param_ind);
+
+    else
+
+        TieVW  = 0;
+        TieArea = 0;
+
+        % Kept for compatibility/debugging with previous version
+        test = 1;
+        diff_matrix = [];
+        gap_info = [];
+
+        % Only compute if tie-contact information exists
+        if isfield(model, 'tie_contact') && ~isempty(model.tie_contact)
+
+            nfaces = size(model.tie_contact.primary_nodes, 1);
+
+            for iface = 1:nfaces
+
+                % Integration point map for this primary face
+                ip_map0 = edata2.all_ip_map{1, 1}{iface, 1};
+
+                % Primary face node IDs
+                primary_face_nodes = model.tie_contact.primary_nodes(iface, :);
+
+                surface_TieVW = 0;
+                surface_Area  = 0;
+
+                % Primary face coordinates and virtual displacements
+                X_face_current  = zeros(4, 3);
+                X_face_1        = zeros(4, 3);
+                X_face_ref      = zeros(4, 3);
+                delu_nodes_prim = zeros(4, 3);
+
+                for kface = 1:4
+
+                    idx = find(model.nodes(:, 1) == primary_face_nodes(kface + 1));
+
+                    X_face_current(kface, :)  = ecoords_pre(idx, 1:3);
+                    X_face_1(kface, :)        = ecoords_1(idx, 1:3);
+                    X_face_ref(kface, :)      = ecoords0(idx, 1:3);
+                    delu_nodes_prim(kface, :) = delu(primary_face_nodes(kface + 1), :);
+
+                end
+
+                % Loop over tie-contact integration points
+                for ip = 1:length(ip_map0)
+
+                    % Primary integration point coordinates
+                    xi  = ip_map0(ip).prim_rs(1);
+                    eta = ip_map0(ip).prim_rs(2);
+
+                    % Primary quad shape functions
+                    Np = 0.25 * [ ...
+                        (1 - xi) * (1 - eta);
+                        (1 + xi) * (1 - eta);
+                        (1 + xi) * (1 + eta);
+                        (1 - xi) * (1 + eta)];
+
+                    % Primary integration point positions
+                    prim_xyz_ref      = Np' * X_face_ref;
+                    prim_xyz_current  = Np' * X_face_1;
+                    prim_xyz_current2 = Np' * X_face_current;
+
+                    % Primary virtual displacement at integration point
+                    delu_prim_gp = Np' * delu_nodes_prim;
+
+                    % Secondary element/face information from the IP map
+                    sec_elem_id    = ip_map0(ip).sec_elem_id;
+                    sec_elem_nodes = ip_map0(ip).sec_face;
+
+                    % Secondary face coordinates and virtual displacements
+                    delu_nodes_sec = zeros(4, 3);
+                    X_sec_1        = zeros(4, 3);
+                    X_sec_ref      = zeros(4, 3);
+                    X_sec_current  = zeros(4, 3);
+
+                    for k2 = 1:4
+
+                        idx2 = find(model.nodes(:, 1) == sec_elem_nodes(k2));
+
+                        delu_nodes_sec(k2, :) = delu(sec_elem_nodes(k2), :);
+                        X_sec_1(k2, :)        = ecoords_1(idx2, 1:3);
+                        X_sec_current(k2, :)  = ecoords_pre(idx2, 1:3);
+                        X_sec_ref(k2, :)      = ecoords0(idx2, 1:3);
+
+                    end
+
+                    % Secondary integration point coordinates
+                    xi_sec  = ip_map0(ip).sec_rs(1);
+                    eta_sec = ip_map0(ip).sec_rs(2);
+
+                    % Secondary quad shape functions
+                    N_sec = 0.25 * [ ...
+                        (1 - xi_sec) * (1 - eta_sec);
+                        (1 + xi_sec) * (1 - eta_sec);
+                        (1 + xi_sec) * (1 + eta_sec);
+                        (1 - xi_sec) * (1 + eta_sec)];
+
+                    % Secondary integration point positions
+                    sec_xyz_ref      = N_sec' * X_sec_ref;
+                    sec_xyz_current  = N_sec' * X_sec_1;
+                    sec_xyz_current2 = N_sec' * X_sec_current;
+
+                    % Secondary virtual displacement at integration point
+                    delu_sec_gp = N_sec' * delu_nodes_sec;
+
+                    % Virtual gap between primary and secondary virtual displacements
+                    delta_g = delu_prim_gp - delu_sec_gp;
+
+                    % Surface Jacobian for primary face
+                    dN_dxi = 0.25 * [ ...
+                        -(1 - eta);
+                         (1 - eta);
+                         (1 + eta);
+                        -(1 + eta)];
+
+                    dN_deta = 0.25 * [ ...
+                        -(1 - xi);
+                        -(1 + xi);
+                         (1 + xi);
+                         (1 - xi)];
+
+                    dX_dxi  = dN_dxi'  * X_face_current;
+                    dX_deta = dN_deta' * X_face_current;
+
+                    area_vec = cross(dX_dxi, dX_deta);
+                    jac_surf = norm(area_vec);
+
+                    % Integration weight from tie-contact IP map
                     w_ip = ip_map0(ip).weight;
                     jac_weighted = jac_surf * w_ip;
-    
-                    % Penalty force is difference of gaps (current - reference)
+
+                    % Penalty force from contact gap difference
                     gap_current = sec_xyz_current2 - prim_xyz_current2;
                     gap_ref     = ip_map0(ip).gap;
-                    gapdiff = gap_current - gap_ref;
-                    edata2.all_ip_map{1,1}{iface,1}(ip).gap_current = norm(gapdiff);
+                    gapdiff     = gap_current - gap_ref;
+
+                    edata2.all_ip_map{1, 1}{iface, 1}(ip).gap_current = norm(gapdiff);
+
                     T_ip = eps * gapdiff;
-    
+
+                    % Debug/contact information
                     gap_info = [gap_info; iface, ip, ...
-                        gap_current(1), gap_current(2), gap_current(3), ...
-                        sec_xyz_current2(1),     sec_xyz_current2(2),     sec_xyz_current2(3), ...
-                        prim_xyz_current2(1),     prim_xyz_current2(2),     prim_xyz_current2(3)];
-                    
-    
+                        gap_current(1),      gap_current(2),      gap_current(3), ...
+                        sec_xyz_current2(1), sec_xyz_current2(2), sec_xyz_current2(3), ...
+                        prim_xyz_current2(1), prim_xyz_current2(2), prim_xyz_current2(3)];
+
+                    % Tie-contact virtual work contribution
                     surface_TieVW = surface_TieVW + dot(T_ip, delta_g) * jac_weighted;
-                    surface_Area = surface_Area + jac_weighted;
+                    surface_Area  = surface_Area  + jac_weighted;
+
                 end
-        
-                TieVW = TieVW + surface_TieVW;               % Add surface element TieVW
+
+                TieVW = TieVW + surface_TieVW;
+
+                % Store face contribution in global vector
                 TieVW_vector(iface, param_ind) = surface_TieVW;
+
                 TieArea = TieArea + surface_Area;
-        
+
             end
+
         end
 
         TieVW_out(param_ind) = TieVW;
 
     end
 
-%% ----------------- Nodal Force Virtual Work (Subset Interface) -----------------
-    if isfile(nodalFile) && ForwardCount ~= 1
-        
+
+    %% --------------------------------------------------------------------
+    %  Nodal force Virtual Work
+    % ---------------------------------------------------------------------
+    % Computes virtual work from nodal forces on interface/traction subsets.
+
+    if hasNodalCache
+
         nodal_VW = nodal_VW_out(param_ind);
 
-    else     
+    else
 
-    
-        % Number of traction surfaces
-        nLoad_nodal = length(edata2); 
-        % Initialize vector to store virtual work per load surface
+        % Number of traction surfaces/interfaces
+        nLoad_nodal = length(edata2);
+
+        % Virtual work contribution from each nodal-force subset
         nodal_VW_vector = zeros(nLoad_nodal, 1);
-    
+
         parfor nLoad_idx = 1:nLoad_nodal
-            % Extract interface connectivity (nodes in columns 2 to 5)
+
+            % Surface/interface connectivity, node IDs in columns 2 to 5
             conn = edata2(nLoad_idx).surface_traction.conn(:, 2:5);
-            
-            % Identify unique node IDs within this interface
+
+            % Unique nodes on this interface
             interface_nodes = unique(conn(:));
-            
-            % Filter for valid node IDs (ensure they are positive and within range)
+
+            % Keep only valid positive node IDs
             interface_nodes = interface_nodes(interface_nodes > 0);
-            
-            % Compute Virtual Work for this subset
-            % Perform element-wise multiplication and double sum for efficiency
-            work_subset = sum(sum(nodal_force(interface_nodes, :) .* delu(interface_nodes, :)));
-            
-            % Store the result in the vector
+
+            % Sum nodal_force dot virtual_displacement over this node subset
+            work_subset = sum(sum( ...
+                nodal_force(interface_nodes, :) .* delu(interface_nodes, :)));
+
             nodal_VW_vector(nLoad_idx) = work_subset;
+
         end
-    
-        % Final sum of the nodal virtual work contributions
+
+        % Total nodal virtual work
         nodal_VW = sum(nodal_VW_vector);
+
         nodal_VW_out(param_ind) = nodal_VW;
 
     end
-    
-    
-    
-    
-    
-    
-    %% ----------------------------- Cost Function Calculation and Output ---------------------------  
-    if EVW ==0 || isfile(fullfile(path.VF, ['EVW_cached_', modelName, '.csv']))
-        EVW_original = readmatrix(fullfile(path.VF, ['EVW_cached_', modelName, '.csv']));
-        EVW_denom = EVW_original(param_ind);
-    else
-        EVW_denom = EVW;
-    end
 
-    add_cost = ((IVW - EVW -TieVW -nodal_VW)/(EVW_denom))^2;
     
-    cost_func = add_cost + cost_func;      % L2 cost function for virtual work balance
 
-    time5 = toc;
-        fprintf('EVW/IVW calculation took %.4f s\n', time5);    
+
+    %% --------------------------------------------------------------------
+    %  Cost function
+    % ---------------------------------------------------------------------
+    % Virtual work residual:
+    % internal work should balance all external contributions.
+    residual = IVW - EVW - TieVW - nodal_VW;
+
+    % Normalized squared residual contribution for this parameter set
+    add_cost = (residual / EVW)^2;
+
+    % Accumulate over parameter sweep
+    cost_func = cost_func + add_cost;
+
+    fprintf('EVW/IVW calculation took %.4f s\n', toc);
+
 end
 
-cost_func = sqrt(cost_func);                    % Final cost function output
 
-%--------------------------------------------------------------------------
-% Cache Simulation Output (if simulation just performed)
-%--------------------------------------------------------------------------
+%% ------------------------------------------------------------------------
+%  Final cost
+% -------------------------------------------------------------------------
+
+% Final L2-like cost over all parameter sets
+cost_func = sqrt(cost_func);
+
+
+%% ------------------------------------------------------------------------
+%  Write FEBio simulation caches if newly computed
+% -------------------------------------------------------------------------
+
 if NewVirtualWorkFlag == 1
+
     tic
-    writematrix(nodedat_out, nodeCachePath);        % Cache node output
-    writematrix(elemdat_out, elemCachePath);        % Cache element output
-    time6 = toc;
-    fprintf('writing data took %.4f s\n', time6);
+    writematrix(nodedat_out, nodeCachePath);
+    writematrix(elemdat_out, elemCachePath);
+    fprintf('writing nodedat/elemdat cache took %.4f s\n', toc);
+
 end
 
-%--------------------------------------------------------------------------
-% Cache Simulation Output EVW and TieVW (if simulation just performed)
-%--------------------------------------------------------------------------
 
+%% ------------------------------------------------------------------------
+%  Write EVW/TieVW/Nodal caches
+% -------------------------------------------------------------------------
 
 if ~isfile(energyFile) || ForwardCount == 1
-    writematrix(EVW_out,energyFile);     % Cache EVW
+    writematrix(EVW_out, energyFile);
 end
 
 if ~isfile(tieFile) || ForwardCount == 1
-    writematrix(TieVW_out, tieFile);        % Cache TieVW
+    writematrix(TieVW_out, tieFile);
 end
 
 if ~isfile(nodalFile) || ForwardCount == 1
-    writematrix(nodal_VW_out, nodalFile);        % Cache simpEVW
+    writematrix(nodal_VW_out, nodalFile);
 end
 
-
-%--------------------------------------------------------------------------
-% End of Function
-%--------------------------------------------------------------------------
 end
