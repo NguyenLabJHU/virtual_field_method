@@ -27,7 +27,7 @@ Ensure your Finite Element (FE) model and experimental data files are placed in 
 ### 3. Configure the Main Script
 Open the main execution script located at src/Run_test_uniform_optimization_multistart_calc_Fpre.m. You will need to define your input files at the top of the script under the File names section:
 
-```Matlab
+```matlab
 mymodel = 'your_model_file.feb';      % Your FE model file
 myexpdata = 'your_exp_data.log';      % Your experimental data file
 matFile = 'your_saved_data.mat';      % Name for the pre-saved model data (created automatically if it doesn't exist)
@@ -39,7 +39,7 @@ Loads & Conditions: Modify p_app (pressure) and prestress_time.
 
 Optimization Bounds: Adjust the lower (lb) and upper (ub) bounds, as well as the Normalizer array for your material parameters.
 
-```Matlab
+```matlab
 corresponding = [1, 2, 2, 3, 3, 4, 4, 4]; % ID of the corresponding material region
 parameter = {'c1', 'c1', 'k', 'c1', 'k', 'c', 'k1', 'k2'}; % Name of the material parameter to optimize
 ```
