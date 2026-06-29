@@ -916,7 +916,7 @@ for param_ind = 1:nParam
     residual = IVW - EVW - TieVW - nodal_VW;
 
     % Normalized squared residual contribution for this parameter set
-    add_cost = (residual / EVW)^2;
+    add_cost = (residual / (EVW+10^-8))^2;
 
     % Accumulate over parameter sweep
     cost_func = cost_func + add_cost;

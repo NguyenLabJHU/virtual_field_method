@@ -28,24 +28,23 @@ path.results = fullfile(path.parent, 'results');
 path.VF = fullfile(path.parent, 'VF');
 
 % FIle names
-mymodel = '';      % FE model file
-myexpdata = '';    % Experimental data file
-matFile = '';      % Pre-Saved model data
+mymodel = 'Model1.feb';      % FE model file
+myexpdata = 'Model1.log';    % Experimental data file
+matFile = 'Model1.mat';      % Pre-Saved model data
 
-p_app=[-2.0;0.0];
+p_app=[0.15];
 
 % Last physical time at which prestress is calculated/frozen
 prestress_time = 1.0;
 
-
 % Last Time of simulation
-last_time = 2;
+last_time = 1.5;
 
 % Penalty Factor for the contact
 eps = 1000;
 
 % Number of  different material models
-nMaterial = 11;   
+nMaterial = 2;   
 
 % Percentage of dirty data
 noise_percent = 0;
@@ -59,11 +58,11 @@ gauss_order = 2;       % Selects 2x2x2 Gauss quadrature for elements
 nDim = 3;
 
 % Bounds for optimization variables [c1, c2]
-lb = [0.6, 0.6,0.6, 0.6,0.6, 0.6,0.6, 0.6];   % lower bounds
-ub = [1.4, 1.4,1.4, 1.4,1.4, 1.4,1.4, 1.4];   % upper bounds
-Normalizer = [50,100,3266,8.62,172.4,680,13907,6.2];
-corresponding = [1,2,2,3,3,4,4,4];
-parameter = {'c1','c1','k','c1','k','c','k1','k2'};
+lb = [0.6, 0.6];   % lower bounds
+ub = [1.4, 1.4];   % upper bounds
+Normalizer = [0.1,0.5];
+corresponding = [1,2];
+parameter = {'c1','c1'};
 
 count_corresponding = zeros(size(corresponding));
 is_unique = zeros(size(corresponding)); 
@@ -84,23 +83,23 @@ nvars = numel(lb);  % number of variables
 run_simple_model = 'True';
 
 % Which material we want to remove?
-rParts = {{'EB36(2)','EB8','EB35(2)','EB7','EB34(1)','EB6','EB34(1)_1','EB34(1)_2','EB6(1)','EB6(2)'}};
+rParts = {{'Part1','Part3','Part4','Part5'}};
 
 % Which surfaces will be applied the load?
 mat_surface_traction = {'OCT_Cut'};
 
 %% --- Operations for copying and combining parameters in the parameter matrix ---
-target_rows = {[5], [6], [7], [8]};
+target_rows = {};
 
-source_rows = {4, 4, 4, 4};
+source_rows = {};
   
 % each matches source_rows index 
-source_cols = { [1 2 3 4], [1 2 3 4] ,[1 2 3 4], [1 2 3 4]}; 
+source_cols = { }; 
 
-target_cols = {[1 2 3 4], [1 2 3 4] ,[1 2 3 4], [1 2 3 4]};
+target_cols = {};
 
-% direct copies for 1:4
-weights = {[1 1 1 1], [1 1 1 1] ,[1 1 1 1],[1 1 1 1]};   
+% weights if 1, it will be a direct copy
+weights = {};   
 
 % Generating the ops struct
 mat_size=[nMaterial,7];
@@ -142,7 +141,7 @@ start_points = bsxfun(@plus, lb, bsxfun(@times, lhs_points, (ub - lb)));
 randomized_order = randperm(size(start_points, 1));
 start_points = start_points(randomized_order, :);
 
-%start_points(1,:) = [1,1,1,1,1,1,1,1]; %Test if it is working on GT
+start_points(1,:) = [1,1]; %Test if it is working on GT
 
 % Prepend custom start point
 totalRunCount = 1; % Starts at 2 to skip calculation of the virtual field
