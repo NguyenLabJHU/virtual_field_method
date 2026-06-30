@@ -32,6 +32,8 @@ mymodel = 'your_model_file.feb';      % Your FE model file
 myexpdata = 'your_exp_data.log';      % Your experimental data file
 matFile = 'your_saved_data.mat';      % Name for the pre-saved model data (created automatically if it doesn't exist)
 ```
+The current file is set for Model1 (inclusion and matrix), with 2 material regions and 'c1' as parameters to be optimized for each material.
+
 ### 4. Adjust Optimization Parameters (Optional)
 Within the same script, you can adjust the optimization settings to fit your specific analysis:
 
