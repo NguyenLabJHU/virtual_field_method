@@ -12,7 +12,8 @@ VF/*
 
 # But do not ignore the .gitkeep file itself
 !results/.gitkeep
-!data/.gitkeep
+!data/Model1
+!data/Model1.feb
 !VF/.gitkeep
 
 # Derived content-obscured files
