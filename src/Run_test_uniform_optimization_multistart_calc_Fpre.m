@@ -141,7 +141,7 @@ start_points = bsxfun(@plus, lb, bsxfun(@times, lhs_points, (ub - lb)));
 randomized_order = randperm(size(start_points, 1));
 start_points = start_points(randomized_order, :);
 
-start_points(1,:) = [1,1]; %Test if it is working on GT
+%start_points(1,:) = [1,1]; %Test if it is working on GT
 
 % Prepend custom start point
 totalRunCount = 1; % Starts at 2 to skip calculation of the virtual field
