@@ -12,7 +12,7 @@ VF/*
 
 # But do not ignore the .gitkeep file itself
 !results/.gitkeep
-!data/Model1
+!data/Model1.log
 !data/Model1.feb
 !VF/.gitkeep
 
