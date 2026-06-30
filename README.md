@@ -67,7 +67,7 @@ target_cols = {[1 2 3 4], [1 2 3 4], [1 2 3 4], [1 2 3 4]};
 weights = {[1 1 1 1], [1 1 1 1], [1 1 1 1], [1 1 1 1]};   
 ```
 
-target_rows defines which rows in the final parameter matrix will receive copied or combined values.
+target_rows defines which material region in will receive copied or combined values from other material region.
 
 source_rows defines from which material/region the values are taken.
 
